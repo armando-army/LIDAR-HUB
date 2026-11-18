@@ -1,4 +1,4 @@
-# DOOPLER · Proyectos interactivos
+# ARMANDO FREZZE DURAND · Proyectos interactivos
 
 Hub online de Armando Frezze Durand. Abrí las obras con mouse o pantalla táctil.
 
