@@ -13,6 +13,25 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:22px;
 main{display:grid;grid-template-columns:minmax(0,1fr) 306px;gap:16px;align-items:start}.viewer,.controls{border:1px solid var(--line);border-radius:15px;overflow:hidden;background:var(--panel)}.bar{padding:10px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:58px}.bar strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar span{font-size:13px;color:var(--muted)}.file{display:flex;gap:9px;align-items:baseline;min-width:0}.stage{position:relative;display:grid;place-items:center;background:#000;min-height:300px;height:clamp(440px,66vh,760px);overflow:hidden}.stage canvas{position:absolute;inset:0;display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain;object-position:center}.stage.drag::after{content:'Soltá la máscara';position:absolute;inset:12px;border:2px dashed var(--accent);display:grid;place-items:center;border-radius:10px;background:#1b1126c9;font-weight:700;pointer-events:none}.stage:fullscreen{width:100vw;height:100vh;height:100dvh;min-height:0;max-height:none;max-width:none;margin:0;background:#000}.toolbar{display:flex;gap:8px;flex-wrap:wrap}.stage + .bar{flex-wrap:wrap}.stage + .bar span{margin-left:auto}.controls section{padding:16px;border-bottom:1px solid var(--line)}.controls section:last-child{border:0}h2{margin:0 0 11px;font-size:15px;letter-spacing:.01em}.row{display:flex;align-items:center;gap:8px;justify-content:space-between;margin:9px 0;font-size:14px}.row select{max-width:55%;min-height:35px;padding:4px 8px}.range{display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:8px;font-size:14px;margin:12px 0 0}.range output{color:var(--accent);font-size:13px;font-variant-numeric:tabular-nums}.range input{grid-column:1/-1;width:100%;height:18px;margin:2px 0 0;accent-color:var(--accent);cursor:pointer}
 .colors{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.colors button,.colors input{width:33px;height:33px;min-height:0;padding:0;border-radius:50%;border:2px solid #191820;outline:1px solid #5f556a;cursor:pointer}.colors button[aria-pressed=true]{outline:2px solid #fff}.colors input::-webkit-color-swatch-wrapper{padding:3px}.colors input::-webkit-color-swatch{border:0;border-radius:50%}.micro{color:var(--muted);font-size:13px;margin:9px 0 0}.error{position:absolute;z-index:1;padding:16px;background:#211924;border-radius:8px;max-width:85%}.stage [hidden]{display:none}.inline-reset{width:100%}.notice{min-height:1.4em;margin:10px 3px 0;font-size:14px;color:var(--accent)}[aria-pressed=true]:not(.colors button){border-color:#b598d1;color:var(--accent)}
 @media(max-width:850px){main{grid-template-columns:1fr}.stage{height:min(62vh,590px);min-height:250px}.controls{display:grid;grid-template-columns:1fr 1fr}.controls section{border-right:1px solid var(--line)}}@media(max-width:520px){header{align-items:flex-start;flex-direction:column;gap:14px}.controls{display:block}.stage{height:52vh}.frame{padding-top:24px}}
+.projection-menu{position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:4;width:min(320px,calc(100% - 32px));padding:14px;background:#17151feb;border:1px solid #4c425c;border-radius:12px;box-shadow:0 10px 36px #0009}
+.projection-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:9px}
+.projection-heading h2{margin:0;font-size:16px}
+.projection-heading button{min-height:36px;min-width:36px;padding:0;font-size:24px;line-height:1}
+.projection-menu .toolbar{margin-top:10px}
+.projection-menu .micro{min-height:2.8em}
+.projection-overlay{position:absolute;inset:0;z-index:2;pointer-events:none}
+.projection-overlay.adding{cursor:crosshair;pointer-events:auto;touch-action:none}
+.projection-pin{position:absolute;z-index:3;min-height:28px;width:28px;transform:translate(-50%,-50%);border:2px solid #fff;border-radius:50%;background:#34204fe8;padding:0;line-height:1;font-size:13px;color:#fff;cursor:grab;pointer-events:auto;touch-action:none;box-shadow:0 0 0 1px #0008}
+.projection-pin.mesh-pin{width:21px;min-height:21px;border-radius:4px;background:#197b88e8}
+.projection-pin:active{cursor:grabbing}
+.projection-pin.selected{outline:2px solid #e0beff;outline-offset:2px}
+.projection-open{position:absolute;top:16px;right:16px;z-index:4;opacity:0}
+.projection-open:hover,.projection-open:focus-visible,.projection-open.reveal{opacity:1}
+.stage.projection-fullwindow{position:fixed;inset:0;z-index:10;width:100vw;height:100dvh;min-height:0}
+body:has(.stage.projection-fullwindow){overflow:hidden}
+.stage:fullscreen>#view,.stage.projection-fullwindow>#view{object-fit:fill}
+.stage>#view.projection-unavailable{object-fit:contain}
+@media(pointer:coarse){.projection-open{opacity:1}}
 </style>
 </head>
 <body>
@@ -22,7 +41,22 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 306px;gap:16px;align-items
 <div>
 <div class="viewer">
 <div class="bar"><div class="file"><strong id="filename">Máscara de ejemplo</strong><span id="dimensions"></span></div><div class="toolbar"><button id="demo">Ejemplo de luz</button><button id="demoFranco">Ejemplo Franco</button></div></div>
-<div class="stage" id="stage"><canvas id="view" aria-label="Vista previa de ecos luminosos"></canvas><div class="error" id="error" hidden></div></div>
+<div class="stage" id="stage">
+  <canvas id="view" aria-label="Vista previa de ecos luminosos"></canvas><div class="error" id="error" hidden></div>
+  <div id="projectionOverlay" class="projection-overlay" hidden>
+    <canvas id="projectionGrid" aria-hidden="true"></canvas><div id="projectionPins"></div>
+  </div>
+  <button id="projectionOpen" class="projection-open" title="M" hidden>Editar mapeo</button>
+  <section id="projectionMenu" class="projection-menu" aria-labelledby="projectionTitle" hidden>
+    <div class="projection-heading"><h2 id="projectionTitle">Mapeo de proyección</h2><button id="projectionClose" aria-label="Cerrar menú de mapeo" title="Cerrar menú">×</button></div>
+    <label class="row">Mostrar cuadrícula <input id="projectionGuides" type="checkbox" checked></label>
+    <div class="toolbar">
+      <button id="projectionAdd" aria-pressed="false">Agregar punto</button><button id="projectionRemove" disabled>Quitar punto</button>
+      <button id="projectionReset">Restablecer mapeo</button><button id="projectionExit">Salir de pantalla completa</button>
+    </div>
+    <p id="projectionStatus" class="micro" role="status">Arrastrá los pines para ajustar la proyección.</p>
+  </section>
+</div>
 <div class="bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button><button id="showMask" aria-pressed="false">Ver máscara</button><button id="fullscreen">Pantalla completa</button></div><span>Arrastrá una imagen a la vista</span></div>
 </div>
 <p id="notice" class="notice" role="status"></p>
@@ -70,6 +104,392 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 306px;gap:16px;align-items
 </aside>
 </main>
 </div>
+<script>
+'use strict';
+
+const projectionPointLimit = 24;
+const projectionClamp = (value) => Math.max(0, Math.min(1, value));
+
+function projectiveProjection(corners) {
+  const [a, b, c, d] = corners;
+  const rx = b.x - c.x, sx = d.x - c.x, tx = a.x - b.x + c.x - d.x;
+  const ry = b.y - c.y, sy = d.y - c.y, ty = a.y - b.y + c.y - d.y;
+  const determinant = rx * sy - sx * ry;
+  if (Math.abs(determinant) < 1e-7) return null;
+  const g = (tx * sy - sx * ty) / determinant;
+  const h = (rx * ty - tx * ry) / determinant;
+  if (Math.min(1 + g, 1 + h, 1 + g + h) < .025) return null;
+  return (u, v) => {
+    const w = 1 + g * u + h * v;
+    return {
+      x: (a.x + (b.x * (1 + g) - a.x) * u + (d.x * (1 + h) - a.x) * v) / w,
+      y: (a.y + (b.y * (1 + g) - a.y) * u + (d.y * (1 + h) - a.y) * v) / w
+    };
+  };
+}
+
+function projectionMesh(corners, controls) {
+  const project = projectiveProjection(corners);
+  if (!project) return null;
+  const edgeWeight = (u, v) => 16 * u * (1 - u) * v * (1 - v);
+  const offsets = controls.map((point) => {
+    const base = project(point.u, point.v);
+    const edge = edgeWeight(point.u, point.v);
+    return {...point, dx: (point.x - base.x) / edge, dy: (point.y - base.y) / edge};
+  });
+  const map = (u, v) => {
+    const base = project(u, v);
+    const edge = edgeWeight(u, v);
+    let weight = 1, x = 0, y = 0;
+    for (const point of offsets) {
+      const distance = (u - point.u) ** 2 + (v - point.v) ** 2;
+      if (distance < 1e-12) return {x: point.x, y: point.y};
+      const influence = .035 / distance ** 1.5;
+      weight += influence;
+      x += point.dx * influence;
+      y += point.dy * influence;
+    }
+    return {x: base.x + edge * x / weight, y: base.y + edge * y / weight};
+  };
+  const cuts = (key) => {
+    const values = [...Array.from({length: 25}, (_, i) => i / 24), ...controls.map((p) => p[key])];
+    return values.sort((a,b) => a-b).filter((value, i) => i === 0 || value - values[i-1] > 1e-6);
+  };
+  const us = cuts('u'), vs = cuts('v');
+  const grid = vs.map((v) => us.map((u) => ({u, v, ...map(u, v)})));
+  const triangles = [];
+  const cross = (a,b,c) => (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+  for (let y = 1; y < vs.length; y++) for (let x = 1; x < us.length; x++) {
+    const a = grid[y-1][x-1], b = grid[y-1][x], c = grid[y][x], d = grid[y][x-1];
+    if (cross(a,b,c) <= 1e-12 || cross(a,c,d) <= 1e-12) return null;
+    triangles.push([a,b,c],[a,c,d]);
+  }
+  const vertices = new Float32Array(triangles.length * 12);
+  let i = 0;
+  for (const triangle of triangles) for (const point of triangle) {
+    vertices[i++] = 2 * point.x - 1;
+    vertices[i++] = 1 - 2 * point.y;
+    vertices[i++] = point.u;
+    vertices[i++] = 1 - point.v;
+  }
+  return {vertices, triangles, map};
+}
+
+function projectionSourcePoint(mesh, x, y) {
+  for (const [a,b,c] of mesh.triangles) {
+    const dx = x - a.x, dy = y - a.y;
+    const bx = b.x - a.x, by = b.y - a.y, cx = c.x - a.x, cy = c.y - a.y;
+    const determinant = bx * cy - cx * by;
+    const s = (dx * cy - cx * dy) / determinant;
+    const t = (bx * dy - dx * by) / determinant;
+    if (s >= -1e-6 && t >= -1e-6 && s+t <= 1.000001) {
+      return {u: a.u + s*(b.u-a.u) + t*(c.u-a.u), v: a.v + s*(b.v-a.v) + t*(c.v-a.v)};
+    }
+  }
+  return null;
+}
+
+function createProjectionMapper(gl, stage, createShader, redraw) {
+  const el = (id) => document.getElementById(id);
+  const overlay = el('projectionOverlay'), grid = el('projectionGrid'), pins = el('projectionPins');
+  const menu = el('projectionMenu'), open = el('projectionOpen'), guides = el('projectionGuides');
+  const add = el('projectionAdd'), remove = el('projectionRemove'), status = el('projectionStatus');
+  const storage = 'ecos-luminosos.projection.v1';
+  let active = false, expanded = false, adding = false, selected = -1, revealTimer;
+  let points = [], corners, mesh, inputWidth, inputHeight, outputWidth, outputHeight;
+  let framebuffer, sceneTexture, program, position, uv, sampler, buffer, uploadedMesh;
+  let frameWidth = 0, frameHeight = 0;
+  const instructions = 'Arrastrá las esquinas o los puntos de la malla.';
+  try {
+    const saved = JSON.parse(localStorage.getItem(storage));
+    const normalized = (n) => Number.isFinite(n) && n >= 0 && n <= 1;
+    if (saved?.corners?.length === 4 && saved.corners.every((p) => normalized(p.x) && normalized(p.y)) &&
+        Array.isArray(saved.points) && saved.points.length <= projectionPointLimit &&
+        saved.points.every((p) => normalized(p.x) && normalized(p.y) && p.u > .035 && p.u < .965 && p.v > .035 && p.v < .965)) {
+      mesh = projectionMesh(saved.corners, saved.points);
+      if (mesh) ({corners, points} = saved);
+    }
+  } catch { /* A saved mapping is optional. */ }
+
+  function save() {
+    try { localStorage.setItem(storage, JSON.stringify({corners, points})); } catch { /* Storage may be unavailable. */ }
+  }
+
+  function fitCorners() {
+    const {width, height} = stage.getBoundingClientRect();
+    if (!width || !height || !inputWidth || !inputHeight) return;
+    const fit = Math.min(width / inputWidth, height / inputHeight);
+    const x = (1 - inputWidth * fit / width) / 2;
+    const y = (1 - inputHeight * fit / height) / 2;
+    corners = [{x,y},{x:1-x,y},{x:1-x,y:1-y},{x,y:1-y}].map((p) => ({
+      x: projectionClamp(p.x),
+      y: projectionClamp(p.y)
+    }));
+    mesh = projectionMesh(corners, points);
+  }
+
+  function available() {
+    if (program) return true;
+    program = gl.createProgram();
+    gl.attachShader(program, createShader(gl.VERTEX_SHADER, `
+      attribute vec2 position, uv;
+      varying vec2 texel;
+      void main() { texel = uv; gl_Position = vec4(position, 0., 1.); }
+    `));
+    gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      uniform sampler2D scene;
+      varying vec2 texel;
+      void main() { gl_FragColor = texture2D(scene, texel); }
+    `));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(program));
+    position = gl.getAttribLocation(program, 'position');
+    uv = gl.getAttribLocation(program, 'uv');
+    sampler = gl.getUniformLocation(program, 'scene');
+    buffer = gl.createBuffer();
+    framebuffer = gl.createFramebuffer();
+    sceneTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, sceneTexture);
+    for (const [parameter, value] of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],
+        [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]]) {
+      gl.texParameteri(gl.TEXTURE_2D, parameter, value);
+    }
+    return true;
+  }
+
+  function updateUI() {
+    menu.hidden = !active || !expanded;
+    open.hidden = !active || expanded;
+    overlay.hidden = !active || !expanded || !guides.checked;
+    overlay.classList.toggle('adding', adding && !overlay.hidden);
+    add.setAttribute('aria-pressed', String(adding));
+    add.disabled = points.length >= projectionPointLimit;
+    remove.disabled = selected < 0;
+    status.textContent = adding ? 'Hacé clic dentro de la superficie para sumar un punto.' : instructions;
+  }
+
+  function drawGuides() {
+    if (overlay.hidden || !mesh) return;
+    const {width,height} = stage.getBoundingClientRect();
+    const density = Math.min(devicePixelRatio || 1, 2);
+    if (grid.width !== Math.round(width*density) || grid.height !== Math.round(height*density)) {
+      grid.width = Math.round(width*density);
+      grid.height = Math.round(height*density);
+    }
+    const ctx = grid.getContext('2d');
+    ctx.setTransform(density,0,0,density,0,0);
+    ctx.clearRect(0,0,width,height);
+    for (let i=0;i<=8;i++) {
+      const line = i/8;
+      for (const vertical of [true,false]) {
+        ctx.beginPath();
+        for (let j=0;j<=36;j++) {
+          const t = j/36, p = mesh.map(vertical ? line : t, vertical ? t : line);
+          if (j) ctx.lineTo(p.x*width,p.y*height);
+          else ctx.moveTo(p.x*width,p.y*height);
+        }
+        ctx.lineWidth = i===0 || i===8 ? 1.8 : 1;
+        ctx.strokeStyle = i===0 || i===8 ? '#e6c9ffdb' : '#eadbff69';
+        ctx.stroke();
+      }
+    }
+    [...corners,...points].forEach((p,i) => {
+      const button = pins.children[i];
+      if (!button) return;
+      button.style.left = 'clamp(13px, '+p.x*100+'%, calc(100% - 13px))';
+      button.style.top = 'clamp(13px, '+p.y*100+'%, calc(100% - 13px))';
+      button.classList.toggle('selected', i>=4 && i-4===selected);
+    });
+  }
+
+  function setGeometry(nextCorners, nextPoints) {
+    const next = projectionMesh(nextCorners, nextPoints);
+    if (!next) return false;
+    corners = nextCorners;
+    points = nextPoints;
+    mesh = next;
+    drawGuides();
+    redraw();
+    return true;
+  }
+
+  function movePin(index, x, y) {
+    const nextCorners = corners.map((point) => ({...point}));
+    const nextPoints = points.map((point) => ({...point}));
+    Object.assign(index < 4 ? nextCorners[index] : nextPoints[index-4], {x:projectionClamp(x),y:projectionClamp(y)});
+    // Carry mesh points along with corner changes. Their local offsets stay editable.
+    if (index < 4 && points.length) {
+      const before = projectiveProjection(corners), after = projectiveProjection(nextCorners);
+      if (!after) return false;
+      for (const point of nextPoints) {
+        const original = before(point.u,point.v), mapped = after(point.u,point.v);
+        point.x = projectionClamp(point.x + mapped.x - original.x);
+        point.y = projectionClamp(point.y + mapped.y - original.y);
+      }
+    }
+    return setGeometry(nextCorners,nextPoints);
+  }
+
+  function mountPins() {
+    pins.replaceChildren();
+    if (!corners) return;
+    const labels = ['superior izquierda','superior derecha','inferior derecha','inferior izquierda'];
+    [...corners,...points].forEach((_,index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'projection-pin' + (index<4?'':' mesh-pin');
+      button.textContent = index < 4 ? String(index+1) : '';
+      button.setAttribute('aria-label', index<4 ? 'Esquina '+labels[index] : 'Punto de malla '+(index-3));
+      let drag;
+      button.onpointerdown = (event) => {
+        if (event.button !== 0 || drag) return;
+        if (index>=4) { selected=index-4; updateUI(); drawGuides(); }
+        const p = index<4 ? corners[index] : points[index-4];
+        drag = {id:event.pointerId,x:event.clientX,y:event.clientY,start:{...p}};
+        button.setPointerCapture(event.pointerId);
+      };
+      button.onpointermove = (event) => {
+        if (event.pointerId !== drag?.id) return;
+        const {width,height} = stage.getBoundingClientRect();
+        movePin(index,drag.start.x+(event.clientX-drag.x)/width,drag.start.y+(event.clientY-drag.y)/height);
+      };
+      button.onlostpointercapture = () => { drag=undefined; save(); };
+      button.onfocus = () => { if (index>=4) { selected=index-4; updateUI(); drawGuides(); } };
+      button.onkeydown = (event) => {
+        const shift = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];
+        if (!shift) return;
+        event.preventDefault();
+        const {width,height} = stage.getBoundingClientRect();
+        const p = index<4 ? corners[index] : points[index-4];
+        const step = event.shiftKey ? 10 : 1;
+        if (movePin(index,p.x+shift[0]*step/width,p.y+shift[1]*step/height)) save();
+      };
+      pins.append(button);
+    });
+    drawGuides();
+  }
+
+  function showMenu(show) {
+    expanded = show;
+    adding = false;
+    updateUI();
+    drawGuides();
+    if (!show) open.classList.remove('reveal');
+  }
+
+  open.onclick = () => showMenu(true);
+  el('projectionClose').onclick = () => showMenu(false);
+  guides.onchange = () => { adding = false; updateUI(); drawGuides(); };
+  add.onclick = () => {
+    adding = !adding;
+    guides.checked = true;
+    updateUI();
+    drawGuides();
+  };
+  remove.onclick = () => {
+    if (selected < 0) return;
+    const next = points.filter((_, i) => i !== selected);
+    if (setGeometry(corners, next)) { selected=-1; save(); updateUI(); mountPins(); }
+  };
+  el('projectionReset').onclick = () => {
+    points=[]; selected=-1; adding=false;
+    fitCorners();
+    save();
+    updateUI();
+    mountPins();
+    redraw();
+  };
+  overlay.onpointerdown = (event) => {
+    if (!adding || event.target.closest('button') || !mesh || event.button !== 0) return;
+    const rect = stage.getBoundingClientRect();
+    const x = (event.clientX-rect.left)/rect.width, y = (event.clientY-rect.top)/rect.height;
+    const point = projectionSourcePoint(mesh,x,y);
+    if (!point || Math.min(point.u,point.v,1-point.u,1-point.v) <= .035 ||
+        points.some((p) => Math.hypot(p.u-point.u,p.v-point.v)<.045)) {
+      status.textContent = 'Elegí un lugar interior, separado de los otros puntos.';
+      return;
+    }
+    if (setGeometry(corners,[...points,{...point,x,y}])) {
+      selected=points.length-1; adding=false;
+      save(); updateUI(); mountPins();
+      pins.children[selected+4]?.focus();
+    }
+  };
+  stage.addEventListener('pointermove', () => {
+    if (!active || expanded) return;
+    open.classList.add('reveal');
+    clearTimeout(revealTimer);
+    revealTimer=setTimeout(() => open.classList.remove('reveal'), 1500);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (!active || event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.key.toLowerCase() !== 'm') return;
+    showMenu(!expanded);
+  });
+
+  return {
+    get active() { return active; },
+    setFullscreen(enabled) {
+      active=enabled;
+      if (active) {
+        try { available(); } catch (error) {
+          active=false;
+          program=null;
+          console.error(error);
+        }
+      }
+      selected=-1;
+      showMenu(active);
+    },
+    resize(sceneWidth,sceneHeight,width,height) {
+      inputWidth=sceneWidth; inputHeight=sceneHeight; outputWidth=width; outputHeight=height;
+      if (!corners) fitCorners();
+      if (pins.children.length !== 4+points.length) mountPins();
+      else drawGuides();
+    },
+    begin() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER,framebuffer);
+      if (inputWidth!==frameWidth || inputHeight!==frameHeight) {
+        gl.activeTexture(gl.TEXTURE4);
+        gl.bindTexture(gl.TEXTURE_2D,sceneTexture);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,inputWidth,inputHeight,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,sceneTexture,0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+          return false;
+        }
+        frameWidth=inputWidth; frameHeight=inputHeight;
+      }
+      gl.viewport(0,0,inputWidth,inputHeight);
+      return true;
+    },
+    draw() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      gl.viewport(0,0,outputWidth,outputHeight);
+      gl.clearColor(0,0,0,1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      if (!mesh) return;
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D,sceneTexture);
+      gl.uniform1i(sampler,4);
+      gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+      if (uploadedMesh!==mesh) {
+        gl.bufferData(gl.ARRAY_BUFFER,mesh.vertices,gl.DYNAMIC_DRAW);
+        uploadedMesh=mesh;
+      }
+      gl.enableVertexAttribArray(position);
+      gl.enableVertexAttribArray(uv);
+      gl.vertexAttribPointer(position,2,gl.FLOAT,false,16,0);
+      gl.vertexAttribPointer(uv,2,gl.FLOAT,false,16,8);
+      gl.drawArrays(gl.TRIANGLES,0,mesh.vertices.length/4);
+      gl.disableVertexAttribArray(uv);
+    }
+  };
+}
+
+</script>
 <script>
 'use strict';
 
@@ -338,12 +758,14 @@ function createRenderer() {
   const names = ['packedDistances', 'sourceMask', 'backgroundPhoto', 'waveField', 'waveFieldSize', 'photoFit', 'photoActive', 'backgroundColor', 'deformation', 'chrome', 'showWaves', 'frameRadius', 'size', 'origin', 'color', 'phase', 'spacing', 'thickness', 'halo', 'power', 'boundary', 'radial', 'maskOnly', 'distanceScale', 'insideScale', 'glintAxis', 'glintPower', 'glintOffset', 'haloShift', 'audioMode', 'sourcePixelsPerScreenPixel'];
   const locations = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, name)]));
   locations.soundEchoes = gl.getUniformLocation(program, 'soundEchoes[0]');
-  return locations;
+  return Object.assign(locations, {program, buffer, position});
 }
 
-let uniforms;
+let uniforms, projection;
+let sceneWidth = 1, sceneHeight = 1;
 try {
   uniforms = createRenderer();
+  projection = createProjectionMapper(gl, stage, createShader, render);
 } catch (error) {
   byId('error').hidden = false;
   byId('error').textContent = gl ? 'No se pudo iniciar la animación en este navegador.' : error.message;
@@ -526,13 +948,17 @@ function fitDrawingBuffer() {
   const maxSide = Math.max(width, height);
   const fit = Math.min(viewport.width / width, viewport.height / height);
   const scale = Math.min(2560 / maxSide, Math.max(1, fit * (window.devicePixelRatio || 1)));
-  const renderWidth = Math.max(1, Math.round(width * scale));
-  const renderHeight = Math.max(1, Math.round(height * scale));
+  sceneWidth = Math.max(1, Math.round(width * scale));
+  sceneHeight = Math.max(1, Math.round(height * scale));
+  const density = Math.min(window.devicePixelRatio || 1, 2560 / Math.max(viewport.width, viewport.height));
+  const mapping = projection?.active;
+  const renderWidth = mapping ? Math.max(1, Math.round(viewport.width * density)) : sceneWidth;
+  const renderHeight = mapping ? Math.max(1, Math.round(viewport.height * density)) : sceneHeight;
   if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
     canvas.width = renderWidth;
     canvas.height = renderHeight;
   }
-  gl.viewport(0, 0, renderWidth, renderHeight);
+  if (mapping) projection.resize(sceneWidth, sceneHeight, renderWidth, renderHeight);
 }
 
 function analyzeMask() {
@@ -623,6 +1049,15 @@ function render() {
   if (!uniforms || !textures) return;
   const numeric = (id) => Number(byId(id).value) / 100;
   const u = uniforms;
+  const mapped = projection?.active && projection.begin();
+  if (!mapped) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  gl.useProgram(u.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, u.buffer);
+  gl.enableVertexAttribArray(u.position);
+  gl.vertexAttribPointer(u.position, 2, gl.FLOAT, false, 0, 0);
   const color = byId('color').value.slice(1).match(/../g).map((value) => parseInt(value, 16) / 255);
   const background = byId('backgroundColor').value.slice(1).match(/../g)
     .map((value) => parseInt(value, 16) / 255 * numeric('backgroundLevel'));
@@ -641,7 +1076,7 @@ function render() {
   for (const name of ['deformation', 'chrome']) gl.uniform1f(u[name], numeric(name));
   gl.uniform1f(u.showWaves, Number(byId('showWaves').checked));
   gl.uniform2f(u.size, source.width, source.height);
-  gl.uniform1f(u.sourcePixelsPerScreenPixel, Math.max(source.width / canvas.width, source.height / canvas.height));
+  gl.uniform1f(u.sourcePixelsPerScreenPixel, Math.max(source.width / sceneWidth, source.height / sceneHeight));
   gl.uniform2f(u.origin, ...origin);
   gl.uniform3f(u.color, ...color);
   gl.uniform1f(u.phase, phase);
@@ -668,6 +1103,7 @@ function render() {
     gl.uniform2fv(u.soundEchoes, echoUniform);
   }
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  if (mapped) projection.draw();
 }
 
 function advanceEchoes(state, delta, speed, spacing) {
@@ -962,20 +1398,39 @@ byId('showMask').onclick = () => {
   refresh();
   restartAnimation();
 };
+function syncProjectionFullscreen() {
+  const fullscreen = document.fullscreenElement === stage || stage.classList.contains('projection-fullwindow');
+  projection?.setFullscreen(fullscreen);
+  canvas.classList.toggle('projection-unavailable', fullscreen && !projection?.active);
+  redrawFitted();
+}
+function exitProjectionFullscreen() {
+  if (stage.classList.contains('projection-fullwindow')) {
+    stage.classList.remove('projection-fullwindow');
+    syncProjectionFullscreen();
+  } else if (document.fullscreenElement === stage) {
+    document.exitFullscreen().catch(console.error);
+  }
+}
 byId('fullscreen').onclick = async () => {
+  if (projection?.active) { exitProjectionFullscreen(); return; }
   try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await stage.requestFullscreen();
+    await stage.requestFullscreen();
   } catch {
-    notice.textContent = 'Este navegador no habilitó la pantalla completa.';
+    stage.classList.add('projection-fullwindow');
+    syncProjectionFullscreen();
   }
 };
+byId('projectionExit').onclick = exitProjectionFullscreen;
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && stage.classList.contains('projection-fullwindow')) exitProjectionFullscreen();
+});
 function redrawFitted() {
   fitDrawingBuffer();
   render();
 }
 new ResizeObserver(redrawFitted).observe(stage);
-document.addEventListener('fullscreenchange', redrawFitted);
+document.addEventListener('fullscreenchange', syncProjectionFullscreen);
 for (const name of ['channel', 'threshold', 'invert']) byId(name).addEventListener('input', analyzeMask);
 byId('cornerRadius').addEventListener('input', () => {
   updateFrame();
@@ -1015,7 +1470,7 @@ stage.addEventListener('drop', (event) => {
   loadImage(event.dataTransfer.files[0]);
 });
 canvas.addEventListener('click', (event) => {
-  if (!source || microphone || byId('mode').value !== 'radial') return;
+  if (!source || projection?.active || microphone || byId('mode').value !== 'radial') return;
   const rect = canvas.getBoundingClientRect();
   const scale = Math.min(rect.width / source.width, rect.height / source.height);
   const width = source.width * scale;
