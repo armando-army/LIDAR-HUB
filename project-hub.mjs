@@ -1,4 +1,5 @@
 const builtins=[
+ {id:'ecos-luminosos',title:'ECOS LUMINOSOS',subtitle:'Cromo líquido · ondas reactivas al sonido',url:'projects/ecos-luminosos.html',thumbnail:'thumbnails/ecos-luminosos.jpg',standalone:true},
  {id:'freemapper',title:'FREE MAPPER',subtitle:'Mapping de proyección',url:'https://freemapper.app/app.html',image:'freemapper',external:true},
  {id:'glass-3d',title:'VIDRIO + 3D',subtitle:'Vidrio acanalado · objeto en tu mano',url:'projects/glass-3d/',image:'glass',thumbnail:'thumbnails/vidrio-3d.png',crop:'glass',ready:true},
  {id:'franco',title:'VIDRIO LINEAS',subtitle:'Escultura en cristal',url:'https://franco-vidrio-interactivo.armiboy.chatgpt.site/',image:'franco',thumbnail:'thumbnails/vidrio-lineas.png',crop:'lines',ready:true},
@@ -23,7 +24,7 @@ export function mountProjectHub(container,onOpen,{online=false}={}){
   const body=document.createElement('div');body.className='project-card-body';
   const title=document.createElement('h3');title.textContent=p.title;
   const subtitle=document.createElement('p');subtitle.textContent=p.subtitle||'Proyecto guardado';
-  const state=document.createElement('span');state.className='project-badge'+(p.ready?' ready':'');state.textContent=p.external?'Web externa':online?'Mouse y tacto':p.ready?(p.native?'Entrada local':'LiDAR preparado'):'Requiere adaptador';
+  const state=document.createElement('span');state.className='project-badge'+(p.ready?' ready':'');state.textContent=p.standalone?'Micrófono y controles':p.external?'Web externa':online?'Mouse y tacto':p.ready?(p.native?'Entrada local':'LiDAR preparado'):'Requiere adaptador';
   const open=document.createElement(p.external?'a':'button');if(p.external){open.href=p.url;open.target='_blank';open.rel='noopener noreferrer';open.className='project-external';open.textContent='Abrir web ↗';}else{open.type='button';open.textContent=online?'Abrir proyecto ↗':'Abrir con la mano ↗';open.onclick=()=>{grid.querySelectorAll('.selected').forEach(c=>c.classList.remove('selected'));card.classList.add('selected');onOpen(p);};}
   body.append(state,title,subtitle,open);
   if(p.custom){const remove=document.createElement('button');remove.type='button';remove.className='hub-remove';remove.textContent='Quitar';remove.setAttribute('aria-label','Quitar '+p.title+' del hub');remove.onclick=()=>{custom=custom.filter(q=>q.id!==p.id);persist();render();};body.append(remove);}
