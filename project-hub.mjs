@@ -1,4 +1,5 @@
 const builtins=[
+ {id:'particulas',title:'PARTÍCULAS',subtitle:'Franco · busto 3D y mapping de proyección',url:'projects/particulas.html',thumbnail:'thumbnails/particulas.png',position:'50% 44%'},
  {id:'ecos-luminosos',title:'ECOS LUMINOSOS',subtitle:'Cromo líquido · ondas reactivas al sonido',url:'projects/ecos-luminosos.html',thumbnail:'thumbnails/ecos-luminosos.jpg',standalone:true},
  {id:'freemapper',title:'FREE MAPPER',subtitle:'Mapping de proyección',url:'https://freemapper.app/app.html',image:'freemapper',external:true},
  {id:'glass-3d',title:'VIDRIO + 3D',subtitle:'Vidrio acanalado · objeto en tu mano',url:'projects/glass-3d/',image:'glass',thumbnail:'thumbnails/vidrio-3d.png',crop:'glass',ready:true},
