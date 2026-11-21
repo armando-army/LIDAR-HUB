@@ -25,13 +25,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 306px;gap:16px;align-items
 .projection-pin.mesh-pin{width:21px;min-height:21px;border-radius:4px;background:#197b88e8}
 .projection-pin:active{cursor:grabbing}
 .projection-pin.selected{outline:2px solid #e0beff;outline-offset:2px}
-.projection-open{position:absolute;top:16px;right:16px;z-index:4;opacity:0}
-.projection-open:hover,.projection-open:focus-visible,.projection-open.reveal{opacity:1}
 .stage.projection-fullwindow{position:fixed;inset:0;z-index:10;width:100vw;height:100dvh;min-height:0}
 body:has(.stage.projection-fullwindow){overflow:hidden}
 .stage:fullscreen>#view,.stage.projection-fullwindow>#view{object-fit:fill}
 .stage>#view.projection-unavailable{object-fit:contain}
-@media(pointer:coarse){.projection-open{opacity:1}}
 </style>
 </head>
 <body>
@@ -46,18 +43,20 @@ body:has(.stage.projection-fullwindow){overflow:hidden}
   <div id="projectionOverlay" class="projection-overlay" hidden>
     <canvas id="projectionGrid" aria-hidden="true"></canvas><div id="projectionPins"></div>
   </div>
-  <button id="projectionOpen" class="projection-open" title="M" hidden>Editar mapeo</button>
   <section id="projectionMenu" class="projection-menu" aria-labelledby="projectionTitle" hidden>
-    <div class="projection-heading"><h2 id="projectionTitle">Mapeo de proyección</h2><button id="projectionClose" aria-label="Cerrar menú de mapeo" title="Cerrar menú">×</button></div>
-    <label class="row">Mostrar cuadrícula <input id="projectionGuides" type="checkbox" checked></label>
+    <div class="projection-heading"><h2 id="projectionTitle">Mapping</h2><button id="projectionClose" title="Ocultar · M" aria-label="Ocultar · M">×</button></div>
+    <label class="row">Ver guías <input id="projectionGuides" type="checkbox" checked></label>
+    <div class="range"><label for="projectionScale">Escala</label><output id="projectionScaleOut" for="projectionScale">100%</output><input id="projectionScale" type="range" min="25" max="200" value="100"></div>
+    <div class="range"><label for="projectionX">Posición X</label><output id="projectionXOut" for="projectionX">0%</output><input id="projectionX" type="range" min="-75" max="75" value="0"></div>
+    <div class="range"><label for="projectionY">Posición Y</label><output id="projectionYOut" for="projectionY">0%</output><input id="projectionY" type="range" min="-75" max="75" value="0"></div>
     <div class="toolbar">
-      <button id="projectionAdd" aria-pressed="false">Agregar punto</button><button id="projectionRemove" disabled>Quitar punto</button>
-      <button id="projectionReset">Restablecer mapeo</button><button id="projectionExit">Salir de pantalla completa</button>
+      <button id="projectionAdd" aria-pressed="false">Añadir punto</button><button id="projectionRemove" disabled>Quitar punto</button>
+      <button id="projectionReset">Restablecer</button><button id="projectionHide">Ocultar · M</button><button id="projectionExit">Salir de pantalla completa</button>
     </div>
     <p id="projectionStatus" class="micro" role="status">Arrastrá los pines para ajustar la proyección.</p>
   </section>
 </div>
-<div class="bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button><button id="showMask" aria-pressed="false">Ver máscara</button><button id="fullscreen">Pantalla completa</button></div><span>Arrastrá una imagen a la vista</span></div>
+<div class="bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button><button id="showMask" aria-pressed="false">Ver máscara</button><button id="fullscreen">Pantalla completa</button><button id="mapping" title="M">Mapping</button></div><span>Arrastrá una imagen a la vista</span></div>
 </div>
 <p id="notice" class="notice" role="status"></p>
 <p id="micStatus" class="notice" role="status" hidden></p>
@@ -194,12 +193,14 @@ function projectionSourcePoint(mesh, x, y) {
 function createProjectionMapper(gl, stage, createShader, redraw) {
   const el = (id) => document.getElementById(id);
   const overlay = el('projectionOverlay'), grid = el('projectionGrid'), pins = el('projectionPins');
-  const menu = el('projectionMenu'), open = el('projectionOpen'), guides = el('projectionGuides');
+  const menu = el('projectionMenu'), guides = el('projectionGuides');
   const add = el('projectionAdd'), remove = el('projectionRemove'), status = el('projectionStatus');
   const storage = 'ecos-luminosos.projection.v1';
-  let active = false, expanded = false, adding = false, selected = -1, revealTimer;
+  const transformInputs = ['projectionScale', 'projectionX', 'projectionY'].map(el);
+  let active = false, expanded = false, adding = false, selected = -1;
   let points = [], corners, mesh, inputWidth, inputHeight, outputWidth, outputHeight;
-  let framebuffer, sceneTexture, program, position, uv, sampler, buffer, uploadedMesh;
+  let scale = 1, offsetX = 0, offsetY = 0;
+  let framebuffer, sceneTexture, program, position, uv, sampler, transformUniform, buffer, uploadedMesh;
   let frameWidth = 0, frameHeight = 0;
   const instructions = 'Arrastrá las esquinas o los puntos de la malla.';
   try {
@@ -209,12 +210,21 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
         Array.isArray(saved.points) && saved.points.length <= projectionPointLimit &&
         saved.points.every((p) => normalized(p.x) && normalized(p.y) && p.u > .035 && p.u < .965 && p.v > .035 && p.v < .965)) {
       mesh = projectionMesh(saved.corners, saved.points);
-      if (mesh) ({corners, points} = saved);
+      if (mesh) {
+        ({corners, points} = saved);
+        if (Number.isFinite(saved.scale) && saved.scale >= .25 && saved.scale <= 2) scale = saved.scale;
+        if (Number.isFinite(saved.offsetX) && Math.abs(saved.offsetX) <= .75) offsetX = saved.offsetX;
+        if (Number.isFinite(saved.offsetY) && Math.abs(saved.offsetY) <= .75) offsetY = saved.offsetY;
+      }
     }
   } catch { /* A saved mapping is optional. */ }
 
   function save() {
-    try { localStorage.setItem(storage, JSON.stringify({corners, points})); } catch { /* Storage may be unavailable. */ }
+    try { localStorage.setItem(storage, JSON.stringify({corners, points, scale, offsetX, offsetY})); } catch { /* Storage may be unavailable. */ }
+  }
+
+  function screenPoint({x,y}) {
+    return {x: (x-.5)*scale+.5+offsetX, y: (y-.5)*scale+.5+offsetY};
   }
 
   function fitCorners() {
@@ -235,8 +245,9 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
     program = gl.createProgram();
     gl.attachShader(program, createShader(gl.VERTEX_SHADER, `
       attribute vec2 position, uv;
+      uniform vec3 projectionTransform;
       varying vec2 texel;
-      void main() { texel = uv; gl_Position = vec4(position, 0., 1.); }
+      void main() { texel = uv; gl_Position = vec4(position * projectionTransform.x + projectionTransform.yz, 0., 1.); }
     `));
     gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, `
       precision mediump float;
@@ -249,6 +260,7 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
     position = gl.getAttribLocation(program, 'position');
     uv = gl.getAttribLocation(program, 'uv');
     sampler = gl.getUniformLocation(program, 'scene');
+    transformUniform = gl.getUniformLocation(program, 'projectionTransform');
     buffer = gl.createBuffer();
     framebuffer = gl.createFramebuffer();
     sceneTexture = gl.createTexture();
@@ -263,12 +275,11 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
 
   function updateUI() {
     menu.hidden = !active || !expanded;
-    open.hidden = !active || expanded;
     overlay.hidden = !active || !expanded || !guides.checked;
     overlay.classList.toggle('adding', adding && !overlay.hidden);
     add.setAttribute('aria-pressed', String(adding));
     add.disabled = points.length >= projectionPointLimit;
-    remove.disabled = selected < 0;
+    remove.disabled = selected < 4;
     status.textContent = adding ? 'Hacé clic dentro de la superficie para sumar un punto.' : instructions;
   }
 
@@ -288,7 +299,7 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
       for (const vertical of [true,false]) {
         ctx.beginPath();
         for (let j=0;j<=36;j++) {
-          const t = j/36, p = mesh.map(vertical ? line : t, vertical ? t : line);
+          const t = j/36, p = screenPoint(mesh.map(vertical ? line : t, vertical ? t : line));
           if (j) ctx.lineTo(p.x*width,p.y*height);
           else ctx.moveTo(p.x*width,p.y*height);
         }
@@ -297,12 +308,13 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
         ctx.stroke();
       }
     }
-    [...corners,...points].forEach((p,i) => {
+    [...corners,...points].forEach((point,i) => {
+      const p = screenPoint(point);
       const button = pins.children[i];
       if (!button) return;
       button.style.left = 'clamp(13px, '+p.x*100+'%, calc(100% - 13px))';
       button.style.top = 'clamp(13px, '+p.y*100+'%, calc(100% - 13px))';
-      button.classList.toggle('selected', i>=4 && i-4===selected);
+      button.classList.toggle('selected', i===selected);
     });
   }
 
@@ -347,7 +359,7 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
       let drag;
       button.onpointerdown = (event) => {
         if (event.button !== 0 || drag) return;
-        if (index>=4) { selected=index-4; updateUI(); drawGuides(); }
+        button.focus({preventScroll:true});
         const p = index<4 ? corners[index] : points[index-4];
         drag = {id:event.pointerId,x:event.clientX,y:event.clientY,start:{...p}};
         button.setPointerCapture(event.pointerId);
@@ -355,19 +367,10 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
       button.onpointermove = (event) => {
         if (event.pointerId !== drag?.id) return;
         const {width,height} = stage.getBoundingClientRect();
-        movePin(index,drag.start.x+(event.clientX-drag.x)/width,drag.start.y+(event.clientY-drag.y)/height);
+        movePin(index,drag.start.x+(event.clientX-drag.x)/(width*scale),drag.start.y+(event.clientY-drag.y)/(height*scale));
       };
       button.onlostpointercapture = () => { drag=undefined; save(); };
-      button.onfocus = () => { if (index>=4) { selected=index-4; updateUI(); drawGuides(); } };
-      button.onkeydown = (event) => {
-        const shift = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];
-        if (!shift) return;
-        event.preventDefault();
-        const {width,height} = stage.getBoundingClientRect();
-        const p = index<4 ? corners[index] : points[index-4];
-        const step = event.shiftKey ? 10 : 1;
-        if (movePin(index,p.x+shift[0]*step/width,p.y+shift[1]*step/height)) save();
-      };
+      button.onfocus = () => { selected=index; updateUI(); drawGuides(); };
       pins.append(button);
     });
     drawGuides();
@@ -378,11 +381,28 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
     adding = false;
     updateUI();
     drawGuides();
-    if (!show) open.classList.remove('reveal');
   }
 
-  open.onclick = () => showMenu(true);
   el('projectionClose').onclick = () => showMenu(false);
+  el('projectionHide').onclick = () => showMenu(false);
+  function syncTransformInputs() {
+    const values = [scale, offsetX, offsetY];
+    transformInputs.forEach((input, index) => {
+      const percent = Math.round(values[index] * 100);
+      input.value = String(percent);
+      el(input.id+'Out').value = percent+'%';
+    });
+  }
+  for (const input of transformInputs) {
+    input.oninput = () => {
+      [scale, offsetX, offsetY] = transformInputs.map((control) => Number(control.value)/100);
+      syncTransformInputs();
+      drawGuides();
+      redraw();
+      save();
+    };
+  }
+  syncTransformInputs();
   guides.onchange = () => { adding = false; updateUI(); drawGuides(); };
   add.onclick = () => {
     adding = !adding;
@@ -391,14 +411,16 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
     drawGuides();
   };
   remove.onclick = () => {
-    if (selected < 0) return;
-    const next = points.filter((_, i) => i !== selected);
+    if (selected < 4) return;
+    const next = points.filter((_, i) => i !== selected-4);
     if (setGeometry(corners, next)) { selected=-1; save(); updateUI(); mountPins(); }
   };
   el('projectionReset').onclick = () => {
     points=[]; selected=-1; adding=false;
+    scale=1; offsetX=0; offsetY=0;
     fitCorners();
     save();
+    syncTransformInputs();
     updateUI();
     mountPins();
     redraw();
@@ -406,7 +428,8 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
   overlay.onpointerdown = (event) => {
     if (!adding || event.target.closest('button') || !mesh || event.button !== 0) return;
     const rect = stage.getBoundingClientRect();
-    const x = (event.clientX-rect.left)/rect.width, y = (event.clientY-rect.top)/rect.height;
+    const x = ((event.clientX-rect.left)/rect.width-.5-offsetX)/scale+.5;
+    const y = ((event.clientY-rect.top)/rect.height-.5-offsetY)/scale+.5;
     const point = projectionSourcePoint(mesh,x,y);
     if (!point || Math.min(point.u,point.v,1-point.u,1-point.v) <= .035 ||
         points.some((p) => Math.hypot(p.u-point.u,p.v-point.v)<.045)) {
@@ -414,25 +437,28 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
       return;
     }
     if (setGeometry(corners,[...points,{...point,x,y}])) {
-      selected=points.length-1; adding=false;
+      selected=points.length+3; adding=false;
       save(); updateUI(); mountPins();
-      pins.children[selected+4]?.focus();
+      pins.children[selected]?.focus();
     }
   };
-  stage.addEventListener('pointermove', () => {
-    if (!active || expanded) return;
-    open.classList.add('reveal');
-    clearTimeout(revealTimer);
-    revealTimer=setTimeout(() => open.classList.remove('reveal'), 1500);
-  });
   document.addEventListener('keydown', (event) => {
-    if (!active || event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.key.toLowerCase() !== 'm') return;
-    showMenu(!expanded);
+    const shift = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];
+    if (!shift || overlay.hidden || selected < 0 || event.ctrlKey || event.metaKey || event.altKey ||
+        event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+    event.preventDefault();
+    const {width,height} = stage.getBoundingClientRect();
+    const p = selected < 4 ? corners[selected] : points[selected-4];
+    const step = event.shiftKey ? 10 : 1;
+    if (movePin(selected,p.x+shift[0]*step/(width*scale),p.y+shift[1]*step/(height*scale))) save();
   });
-
   return {
     get active() { return active; },
-    setFullscreen(enabled) {
+    toggleMenu() {
+      showMenu(!expanded);
+      if (expanded && !overlay.hidden) pins.children[selected]?.focus();
+    },
+    setFullscreen(enabled, openEditor) {
       active=enabled;
       if (active) {
         try { available(); } catch (error) {
@@ -442,7 +468,7 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
         }
       }
       selected=-1;
-      showMenu(active);
+      showMenu(active && openEditor);
     },
     resize(sceneWidth,sceneHeight,width,height) {
       inputWidth=sceneWidth; inputHeight=sceneHeight; outputWidth=width; outputHeight=height;
@@ -476,6 +502,7 @@ function createProjectionMapper(gl, stage, createShader, redraw) {
       gl.activeTexture(gl.TEXTURE4);
       gl.bindTexture(gl.TEXTURE_2D,sceneTexture);
       gl.uniform1i(sampler,4);
+      gl.uniform3f(transformUniform,scale,2*offsetX,-2*offsetY);
       gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
       if (uploadedMesh!==mesh) {
         gl.bufferData(gl.ARRAY_BUFFER,mesh.vertices,gl.DYNAMIC_DRAW);
@@ -1409,9 +1436,10 @@ byId('showMask').onclick = () => {
   refresh();
   restartAnimation();
 };
+let openProjectionEditor = false, enteringProjectionFullscreen = false;
 function syncProjectionFullscreen() {
   const fullscreen = document.fullscreenElement === stage || stage.classList.contains('projection-fullwindow');
-  projection?.setFullscreen(fullscreen);
+  projection?.setFullscreen(fullscreen, openProjectionEditor);
   canvas.classList.toggle('projection-unavailable', fullscreen && !projection?.active);
   redrawFitted();
 }
@@ -1423,18 +1451,32 @@ function exitProjectionFullscreen() {
     document.exitFullscreen().catch(console.error);
   }
 }
-byId('fullscreen').onclick = async () => {
-  if (projection?.active) { exitProjectionFullscreen(); return; }
+async function enterProjectionFullscreen(withEditor) {
+  if (projection?.active || enteringProjectionFullscreen) return;
+  enteringProjectionFullscreen = true;
+  openProjectionEditor = withEditor;
   try {
     await stage.requestFullscreen();
   } catch {
     stage.classList.add('projection-fullwindow');
     syncProjectionFullscreen();
+  } finally {
+    enteringProjectionFullscreen = false;
   }
-};
+}
+byId('fullscreen').onclick = () => enterProjectionFullscreen(false);
+byId('mapping').onclick = () => enterProjectionFullscreen(true);
 byId('projectionExit').onclick = exitProjectionFullscreen;
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && stage.classList.contains('projection-fullwindow')) exitProjectionFullscreen();
+  if (event.key === 'Escape' && stage.classList.contains('projection-fullwindow')) {
+    exitProjectionFullscreen();
+    return;
+  }
+  if (event.key.toLowerCase() !== 'm' || event.repeat || event.ctrlKey || event.metaKey || event.altKey ||
+      event.target.closest?.('textarea, input:not([type="range"]):not([type="checkbox"]):not([type="color"]), [contenteditable="true"]')) return;
+  event.preventDefault();
+  if (projection?.active) projection.toggleMenu();
+  else enterProjectionFullscreen(true);
 });
 function redrawFitted() {
   fitDrawingBuffer();
