@@ -71,6 +71,8 @@ body:has(.stage.projection-fullwindow){overflow:hidden}
 <p class="micro" id="photoName" hidden></p>
 <div class="range"><label for="deformation">Deformación</label><output for="deformation" id="deformationOut"></output><input id="deformation" type="range" min="0" max="100" value="63"></div>
 <div class="range"><label for="cornerRadius">Redondez de las esquinas</label><output for="cornerRadius" id="cornerRadiusOut"></output><input id="cornerRadius" type="range" min="5" max="16" value="7"></div>
+<label class="row">Mostrar borde gris <input type="checkbox" id="showGrayEdge" checked></label>
+<div class="range"><label for="edgeFade">Fundido a negro</label><output for="edgeFade" id="edgeFadeOut"></output><input id="edgeFade" type="range" min="0" max="20" value="0"></div>
 <div class="range"><label for="chrome">Reflejos de cromo</label><output for="chrome" id="chromeOut"></output><input id="chrome" type="range" min="0" max="100" value="68"></div>
 <label class="row">Ondas luminosas <input type="checkbox" id="showWaves" checked></label>
 </section>
@@ -497,7 +499,7 @@ const byId = (id) => document.getElementById(id);
 const canvas = byId('view');
 const stage = byId('stage');
 const notice = byId('notice');
-const fields = ['threshold', 'spacing', 'speed', 'glow', 'haloShift', 'width', 'power', 'glintAngle', 'glintOffset', 'glintPower', 'backgroundLevel', 'deformation', 'chrome', 'cornerRadius'];
+const fields = ['threshold', 'spacing', 'speed', 'glow', 'haloShift', 'width', 'power', 'glintAngle', 'glintOffset', 'glintPower', 'backgroundLevel', 'deformation', 'chrome', 'cornerRadius', 'edgeFade'];
 const frameMargin = .027;
 const defaults = Object.fromEntries(fields.map((key) => [key, byId(key).value]));
 const maskCanvas = document.createElement('canvas');
@@ -550,6 +552,7 @@ uniform vec3 color;
 uniform vec3 backgroundColor;
 uniform vec2 photoFit;
 uniform float photoActive, deformation, chrome, showWaves, frameRadius;
+uniform float showGrayEdge, edgeFade;
 uniform float phase, spacing, thickness, halo, power, boundary, radial, maskOnly, distanceScale, insideScale;
 uniform float haloShift, glintPower, glintOffset;
 uniform float audioMode;
@@ -701,7 +704,7 @@ void main() {
     metal += vec3(.91, .95, 1.) * strip * .72 + vec3(1., .84, .7) * secondary * .38;
     vec3 warped = mix(warpedPhoto, metal, chrome * relief);
     float photoEdge = smoothstep(-frameAA, frameAA, fromFrame);
-    float bevel = boundary * chrome * photoEdge * exp(-square((fromFrame - shortSide * .003) / (shortSide * .0035))) * .44;
+    float bevel = showGrayEdge * boundary * chrome * photoEdge * exp(-square((fromFrame - shortSide * .003) / (shortSide * .0035))) * .44;
     background = mix(backgroundColor, mix(flatPhoto, warped, surface) + vec3(bevel), photoEdge);
   }
 
@@ -729,7 +732,11 @@ void main() {
                   + mix(cool, vec3(1.), .52) * .84 * frameRim
                   + glintWhite * glint * (.83 * frameRim + .36 * halo * frameGlow);
   vec3 result = visible * light + boundary * (1. - maskEdge) * frameLight * frameEmission;
-  gl_FragColor = vec4(clamp(background + result * power * showWaves, 0., 1.), 1.);
+  vec3 outputColor = clamp(background + result * power * showWaves, 0., 1.);
+  if (edgeFade > 0.) {
+    outputColor *= smoothstep(0., max(frameAA, shortSide * edgeFade), abs(fromFrame));
+  }
+  gl_FragColor = vec4(outputColor, 1.);
 }
 `;
 
@@ -758,6 +765,8 @@ function createRenderer() {
   const names = ['packedDistances', 'sourceMask', 'backgroundPhoto', 'waveField', 'waveFieldSize', 'photoFit', 'photoActive', 'backgroundColor', 'deformation', 'chrome', 'showWaves', 'frameRadius', 'size', 'origin', 'color', 'phase', 'spacing', 'thickness', 'halo', 'power', 'boundary', 'radial', 'maskOnly', 'distanceScale', 'insideScale', 'glintAxis', 'glintPower', 'glintOffset', 'haloShift', 'audioMode', 'sourcePixelsPerScreenPixel'];
   const locations = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, name)]));
   locations.soundEchoes = gl.getUniformLocation(program, 'soundEchoes[0]');
+  locations.showGrayEdge = gl.getUniformLocation(program, 'showGrayEdge');
+  locations.edgeFade = gl.getUniformLocation(program, 'edgeFade');
   return Object.assign(locations, {program, buffer, position});
 }
 
@@ -1075,6 +1084,8 @@ function render() {
   gl.uniform3f(u.backgroundColor, ...background);
   for (const name of ['deformation', 'chrome']) gl.uniform1f(u[name], numeric(name));
   gl.uniform1f(u.showWaves, Number(byId('showWaves').checked));
+  gl.uniform1f(u.showGrayEdge, Number(byId('showGrayEdge').checked));
+  gl.uniform1f(u.edgeFade, numeric('edgeFade'));
   gl.uniform2f(u.size, source.width, source.height);
   gl.uniform1f(u.sourcePixelsPerScreenPixel, Math.max(source.width / sceneWidth, source.height / sceneHeight));
   gl.uniform2f(u.origin, ...origin);
@@ -1436,7 +1447,7 @@ byId('cornerRadius').addEventListener('input', () => {
   updateFrame();
   refresh();
 });
-for (const name of ['limit', 'mode', 'direction', 'color', 'backgroundColor', 'showWaves', ...fields.filter((key) => key !== 'threshold' && key !== 'cornerRadius')]) {
+for (const name of ['limit', 'mode', 'direction', 'color', 'backgroundColor', 'showWaves', 'showGrayEdge', ...fields.filter((key) => key !== 'threshold' && key !== 'cornerRadius')]) {
   byId(name).addEventListener('input', refresh);
 }
 for (const button of colorButtons) {
@@ -1452,6 +1463,7 @@ byId('reset').onclick = () => {
   }
   byId('invert').checked = source?.inverted ?? false;
   byId('showWaves').checked = !photo;
+  byId('showGrayEdge').checked = true;
   origin = [.5, .5];
   phase = .27;
   analyzeMask();
