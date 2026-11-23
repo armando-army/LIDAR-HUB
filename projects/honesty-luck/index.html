@@ -92,6 +92,7 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
     <button type="button" data-word="LUCK" aria-pressed="false" disabled>LUCK</button>
     <button type="button" id="microphone" aria-pressed="false" aria-keyshortcuts="V" title="Micrófono · V" disabled>Activar micrófono</button>
     <span id="voice-status" role="status">Voz en español · requiere conexión</span>
+    <button type="button" id="idle-test" aria-pressed="false" disabled>Probar texto</button>
     <label class="control" for="distortion">Distorsión
       <input id="distortion" type="range" min="0" max="100" step="1" value="100" disabled>
       <output id="distortion-value" for="distortion">100%</output>
@@ -41903,6 +41904,59 @@ const dissolveLifetime = 740;
 let spawnIndex = 0;
 let previousFrame = 0;
 let showingSpeech = false;
+const idleTestButton = byId('idle-test');
+const idleDelay = 8000;
+const idleCardDuration = 3600;
+const idleText = [
+  'Puedes levantar\nel teléfono y hablar.',
+  'La comunicación\nserá presente\npero fugaz.',
+  'Temporal\npero eterna.',
+  'Tendrá el mismo delay\nque tuvo la primera',
+  'llamada de tu padre\ny su padre.',
+  'La comunicación\npelea contra el tiempo.'
+];
+let lastActivity = performance.now();
+let idleTestStartedAt = null;
+let idleCard = -1;
+
+function setIdleTest(startedAt) {
+  idleTestStartedAt = startedAt;
+  const running = startedAt !== null;
+  idleTestButton.setAttribute('aria-pressed', String(running));
+  idleTestButton.textContent = running ? 'Detener prueba' : 'Probar texto';
+}
+
+function markActivity(now = performance.now()) {
+  lastActivity = now;
+  if (idleTestStartedAt !== null) setIdleTest(null);
+  if (idleCard < 0) return;
+  idleCard = -1;
+  textInput?.set('');
+  canvas.setAttribute('aria-label', 'Esperando texto');
+}
+
+function updateIdleText(now) {
+  if (!textInput) return;
+  const testing = idleTestStartedAt !== null;
+  if (!testing && (speechSession?.speaking || queue.length || nextWordTimer !== undefined || displayedWords.length)) return;
+  const start = testing ? idleTestStartedAt : lastActivity + idleDelay;
+  if (now < start) return;
+  const position = Math.floor((now - start) / idleCardDuration);
+  if (testing && position >= idleText.length) {
+    resetWords();
+    return;
+  }
+  const card = position % idleText.length;
+  if (card === idleCard) return;
+  idleCard = card;
+  const text = idleText[card];
+  const lines = text.split('\n');
+  const longest = Math.max(...lines.map(line => Array.from(line).length));
+  textScale?.set(.8 * Math.min(1, 11 / longest, 2.4 / lines.length));
+  textInput.set(text.toLocaleUpperCase('es-AR'));
+  canvas.setAttribute('aria-label', text.replaceAll('\n', ' '));
+  for (const button of wordButtons) button.setAttribute('aria-pressed', 'false');
+}
 
 const captureCanvas = document.createElement('canvas');
 const captureContext = captureCanvas.getContext('2d', {willReadFrequently:true});
@@ -42053,6 +42107,7 @@ function syncWordLabels() {
 }
 
 function resetWords() {
+  markActivity();
   wordsInMotion.length = 0;
   spawnIndex = 0;
   previousFrame = 0;
@@ -42093,6 +42148,7 @@ function updateWordLimits(now) {
 }
 
 function addSpokenWord(word, now = performance.now()) {
+  markActivity(now);
   captureWordFrames(now);
   wordsInMotion.push({word, seed:spawnIndex++ + 27, born:now, retiredAt:null, exitAt:null, clip:[]});
   showingSpeech = true;
@@ -42122,7 +42178,7 @@ function drawSpokenWords(now) {
   speechContext.fillStyle = '#000';
   speechContext.fillRect(0, 0, width, height);
   speechContext.imageSmoothingEnabled = false;
-  if (displayedWords.length) speechContext.drawImage(canvas, 0, 0, width, height);
+  if (displayedWords.length || idleCard >= 0) speechContext.drawImage(canvas, 0, 0, width, height);
   const strength = Number(persistenceStrength.value) / 100;
   speechContext.globalCompositeOperation = 'screen';
   for (const item of wordsInMotion) {
@@ -42170,6 +42226,7 @@ function stopMicrophone(message = 'Micrófono apagado') {
   const session = speechSession;
   speechSession = null;
   if (session) {
+    if (session.speaking) markActivity();
     clearTimeout(session.restart);
     if (session.running) session.recognition.abort();
   }
@@ -42184,7 +42241,7 @@ function startMicrophone() {
   recognition.lang = 'es-AR';
   recognition.continuous = true;
   recognition.interimResults = false;
-  const session = { recognition, restart: undefined, running: false, displayed: 0 };
+  const session = { recognition, restart: undefined, running: false, speaking: false, displayed: 0 };
   speechSession = session;
   resetWords();
 
@@ -42203,6 +42260,17 @@ function startMicrophone() {
   recognition.onstart = () => {
     if (speechSession === session) setMicrophoneStatus(true, 'Escuchando…');
   };
+  recognition.onspeechstart = () => {
+    if (speechSession !== session) return;
+    session.speaking = true;
+    markActivity();
+  };
+  function endSpeech() {
+    if (speechSession !== session || !session.speaking) return;
+    session.speaking = false;
+    markActivity();
+  }
+  recognition.onspeechend = endSpeech;
   recognition.onresult = event => {
     if (speechSession !== session) return;
     for (let i = Math.max(event.resultIndex, session.displayed); i < event.results.length; i++) {
@@ -42226,6 +42294,7 @@ function startMicrophone() {
     stopMicrophone(message + ' (' + code + ')');
   };
   recognition.onend = () => {
+    endSpeech();
     session.running = false;
     if (speechSession === session) session.restart = setTimeout(startListening, 350);
   };
@@ -42320,7 +42389,9 @@ function load() {
   });
   CABLES.patch = patch;
   patch.on('onRenderFrame', () => {
-    const source = drawSpokenWords(performance.now()) ?? canvas;
+    const now = performance.now();
+    updateIdleText(now);
+    const source = drawSpokenWords(now) ?? canvas;
     if (!mapper.active) return;
     try {
       renderProjection(source);
@@ -42363,6 +42434,15 @@ function load() {
     });
   }
   wordCount.addEventListener('change', () => updateWordLimits(performance.now()));
+  idleTestButton.disabled = false;
+  idleTestButton.addEventListener('click', () => {
+    const startTest = idleTestStartedAt === null;
+    resetWords();
+    if (!startTest) return;
+    const now = performance.now();
+    setIdleTest(now);
+    updateIdleText(now);
+  });
   adjustDistortion();
   selectWord(preset);
   configureVoice();
