@@ -45,6 +45,7 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
 #projectionView, #speech-canvas, #mapGrid { pointer-events:none; }
 #work.inverted { background:#fff; }
 #work.inverted #glcanvas, #work.inverted #speech-canvas { filter:invert(1); }
+#work.mirrored #glcanvas, #work.mirrored #speech-canvas { transform:scaleX(-1); }
 #work.speaking-visual #glcanvas { opacity:0; }
 #work.projection-active #glcanvas, #work.projection-active #speech-canvas { opacity:0; }
 :fullscreen #glcanvas, .clean-view #glcanvas { cursor:none; }
@@ -96,6 +97,7 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
     <span id="voice-status" role="status">Voz en español · requiere conexión</span>
     <button type="button" id="idle-test" aria-pressed="false" disabled>Probar texto</button>
     <button type="button" id="invert-colors" aria-pressed="false">Invertir</button>
+    <button type="button" id="mirror-image" aria-pressed="false" title="Espejar de izquierda a derecha">Espejar</button>
     <label class="control" for="distortion">Distorsión
       <input id="distortion" type="range" min="0" max="100" step="1" value="100" disabled>
       <output id="distortion-value" for="distortion">100%</output>
@@ -41801,7 +41803,7 @@ function createProjectionMapper(stage, storageKey) {
 }
 
 function createProjectionRenderer(output, mapper) {
- let gl, program, buffer, texture, position, uv, placement, inversion, previousMesh;
+ let gl, program, buffer, texture, position, uv, placement, inversion, mirror, previousMesh;
  function init() {
   gl = output.getContext('webgl', {alpha:false, antialias:true});
   if (!gl) throw new Error('Mapping requiere WebGL.');
@@ -41830,8 +41832,10 @@ function createProjectionRenderer(output, mapper) {
     varying highp vec2 texCoord;
     uniform sampler2D image;
     uniform bool inverted;
+    uniform bool mirrored;
     void main() {
-      vec3 color = texture2D(image, texCoord).rgb;
+      vec2 samplePoint = vec2(mirrored ? 1. - texCoord.x : texCoord.x, texCoord.y);
+      vec3 color = texture2D(image, samplePoint).rgb;
       gl_FragColor = vec4(inverted ? vec3(1.) - color : color, 1.);
     }
   `);
@@ -41846,6 +41850,7 @@ function createProjectionRenderer(output, mapper) {
   uv = gl.getAttribLocation(program, 'uv');
   placement = gl.getUniformLocation(program, 'placement');
   inversion = gl.getUniformLocation(program, 'inverted');
+  mirror = gl.getUniformLocation(program, 'mirrored');
   buffer = gl.createBuffer();
   texture = makeTexture();
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -41863,7 +41868,7 @@ function createProjectionRenderer(output, mapper) {
   return texture;
  }
 
- return function renderProjection(source, inverted) {
+ return function renderProjection(source, inverted, mirrored) {
   if (!mapper.active || !source.width || !source.height) return;
   if (!gl) init();
   if (output.width !== source.width || output.height !== source.height) {
@@ -41887,6 +41892,7 @@ function createProjectionRenderer(output, mapper) {
   const {scale, x, y} = mapper.placement;
   gl.uniform3f(placement, scale / 100, x / 100, y / 100);
   gl.uniform1i(inversion, Number(inverted));
+  gl.uniform1i(mirror, Number(mirrored));
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
@@ -41913,6 +41919,8 @@ let previousFrame = 0;
 let showingSpeech = false;
 const idleTestButton = byId('idle-test');
 const invertColors = byId('invert-colors');
+const mirrorImage = byId('mirror-image');
+const mirrorSetting = 'honesty-luck-microfono.mirrored.v1';
 const idleDelay = 8000;
 const idleCardDuration = 3600;
 const idleText = [
@@ -42372,7 +42380,8 @@ new ResizeObserver(mapper.resize).observe(work);
 const projectedMouseEvents = new WeakSet();
 for (const type of ['mousemove', 'mouseenter', 'mousedown']) {
   canvas.addEventListener(type, event => {
-    if (!mapper.active || projectedMouseEvents.has(event)) return;
+    const mirrored = work.classList.contains('mirrored');
+    if ((!mapper.active && !mirrored) || projectedMouseEvents.has(event)) return;
     event.stopImmediatePropagation();
     const rect = canvas.getBoundingClientRect();
     const point = mapper.inputPoint((event.clientX - rect.left) / rect.width,
@@ -42381,8 +42390,10 @@ for (const type of ['mousemove', 'mouseenter', 'mousedown']) {
       canvas.dispatchEvent(new MouseEvent('mouseleave', {bubbles:true, clientX:-1, clientY:-1}));
       return;
     }
+    const x = mirrored ? 1 - point.u : point.u;
     const mapped = new MouseEvent(type, {bubbles:true, cancelable:true, buttons:event.buttons,
-      button:event.button, movementX:event.movementX, movementY:event.movementY, clientX:rect.left + point.u * rect.width, clientY:rect.top + point.v * rect.height});
+      button:event.button, movementX:mirrored ? -event.movementX : event.movementX, movementY:event.movementY,
+      clientX:rect.left + x * rect.width, clientY:rect.top + point.v * rect.height});
     projectedMouseEvents.add(mapped);
     canvas.dispatchEvent(mapped);
   }, true);
@@ -42415,7 +42426,7 @@ function load() {
     const source = drawSpokenWords(now) ?? canvas;
     if (!mapper.active) return;
     try {
-      renderProjection(source, work.classList.contains('inverted'));
+      renderProjection(source, work.classList.contains('inverted'), work.classList.contains('mirrored'));
     } catch (error) {
       exitFullscreen();
       statusLabel.textContent = 'No se pudo iniciar Mapping.';
@@ -42459,6 +42470,16 @@ function load() {
     const inverted = !work.classList.contains('inverted');
     work.classList.toggle('inverted', inverted);
     invertColors.setAttribute('aria-pressed', String(inverted));
+  });
+  const setMirroring = mirrored => {
+    work.classList.toggle('mirrored', mirrored);
+    mirrorImage.setAttribute('aria-pressed', String(mirrored));
+  };
+  try { setMirroring(localStorage.getItem(mirrorSetting) === 'true'); } catch {}
+  mirrorImage.addEventListener('click', () => {
+    const mirrored = !work.classList.contains('mirrored');
+    setMirroring(mirrored);
+    try { localStorage.setItem(mirrorSetting, String(mirrored)); } catch {}
   });
   idleTestButton.disabled = false;
   idleTestButton.addEventListener('click', () => {
