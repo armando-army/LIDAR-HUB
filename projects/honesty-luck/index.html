@@ -43,6 +43,8 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
 #mapPanel input[type=range] { grid-column:1/-1; width:100%; }
 #mapStatus { margin:.6rem 0 0; }
 #projectionView, #speech-canvas, #mapGrid { pointer-events:none; }
+#work.inverted { background:#fff; }
+#work.inverted #glcanvas, #work.inverted #speech-canvas { filter:invert(1); }
 #work.speaking-visual #glcanvas { opacity:0; }
 #work.projection-active #glcanvas, #work.projection-active #speech-canvas { opacity:0; }
 :fullscreen #glcanvas, .clean-view #glcanvas { cursor:none; }
@@ -93,6 +95,7 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
     <button type="button" id="microphone" aria-pressed="false" aria-keyshortcuts="V" title="Micrófono · V" disabled>Activar micrófono</button>
     <span id="voice-status" role="status">Voz en español · requiere conexión</span>
     <button type="button" id="idle-test" aria-pressed="false" disabled>Probar texto</button>
+    <button type="button" id="invert-colors" aria-pressed="false">Invertir</button>
     <label class="control" for="distortion">Distorsión
       <input id="distortion" type="range" min="0" max="100" step="1" value="100" disabled>
       <output id="distortion-value" for="distortion">100%</output>
@@ -41798,7 +41801,7 @@ function createProjectionMapper(stage, storageKey) {
 }
 
 function createProjectionRenderer(output, mapper) {
- let gl, program, buffer, texture, position, uv, placement, previousMesh;
+ let gl, program, buffer, texture, position, uv, placement, inversion, previousMesh;
  function init() {
   gl = output.getContext('webgl', {alpha:false, antialias:true});
   if (!gl) throw new Error('Mapping requiere WebGL.');
@@ -41826,8 +41829,10 @@ function createProjectionRenderer(output, mapper) {
     precision highp float;
     varying highp vec2 texCoord;
     uniform sampler2D image;
+    uniform bool inverted;
     void main() {
-      gl_FragColor = vec4(texture2D(image, texCoord).rgb, 1.);
+      vec3 color = texture2D(image, texCoord).rgb;
+      gl_FragColor = vec4(inverted ? vec3(1.) - color : color, 1.);
     }
   `);
   program = gl.createProgram();
@@ -41840,6 +41845,7 @@ function createProjectionRenderer(output, mapper) {
   position = gl.getAttribLocation(program, 'position');
   uv = gl.getAttribLocation(program, 'uv');
   placement = gl.getUniformLocation(program, 'placement');
+  inversion = gl.getUniformLocation(program, 'inverted');
   buffer = gl.createBuffer();
   texture = makeTexture();
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -41857,7 +41863,7 @@ function createProjectionRenderer(output, mapper) {
   return texture;
  }
 
- return function renderProjection(source) {
+ return function renderProjection(source, inverted) {
   if (!mapper.active || !source.width || !source.height) return;
   if (!gl) init();
   if (output.width !== source.width || output.height !== source.height) {
@@ -41880,6 +41886,7 @@ function createProjectionRenderer(output, mapper) {
   gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, 16, 8);
   const {scale, x, y} = mapper.placement;
   gl.uniform3f(placement, scale / 100, x / 100, y / 100);
+  gl.uniform1i(inversion, Number(inverted));
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
@@ -41905,6 +41912,7 @@ let spawnIndex = 0;
 let previousFrame = 0;
 let showingSpeech = false;
 const idleTestButton = byId('idle-test');
+const invertColors = byId('invert-colors');
 const idleDelay = 8000;
 const idleCardDuration = 3600;
 const idleText = [
@@ -41913,8 +41921,25 @@ const idleText = [
   'Temporal\npero eterna.',
   'Tendrá el mismo delay\nque tuvo la primera',
   'llamada de tu padre\ny su padre.',
-  'La comunicación\npelea contra el tiempo.'
+  'La comunicación\npelea contra el tiempo.',
+  '',
+  'Tus palabras van a\nperder el sentido',
+  'que alguna vez\nencontraron.\n¿O será al revés?',
+  'Lo importante\nes escucharte.',
+  'La comunicación\nes fugaz.',
+  'Lo que digas va a volver\nen forma de poema\no de recuerdo,',
+  'entre los reflejos\ninfinitos',
+  'de las conversaciones\nque repetimos.',
+  'Hablame. Hablemos.\nEsto es comunicar.',
+  'Soy el tiempo.\nSos palabra.',
+  'Levantá el teléfono.\nQuiero escucharte.',
+  ''
 ];
+let idleLoopDuration = 0;
+const idleCardEnds = idleText.map(text => {
+  idleLoopDuration += text ? idleCardDuration : 1000;
+  return idleLoopDuration;
+});
 let lastActivity = performance.now();
 let idleTestStartedAt = null;
 let idleCard = -1;
@@ -41941,20 +41966,16 @@ function updateIdleText(now) {
   if (!testing && (speechSession?.speaking || queue.length || nextWordTimer !== undefined || displayedWords.length)) return;
   const start = testing ? idleTestStartedAt : lastActivity + idleDelay;
   if (now < start) return;
-  const position = Math.floor((now - start) / idleCardDuration);
-  if (testing && position >= idleText.length) {
-    resetWords();
-    return;
-  }
-  const card = position % idleText.length;
+  const elapsed = (now - start) % idleLoopDuration;
+  const card = idleCardEnds.findIndex(end => elapsed < end);
   if (card === idleCard) return;
   idleCard = card;
   const text = idleText[card];
   const lines = text.split('\n');
-  const longest = Math.max(...lines.map(line => Array.from(line).length));
+  const longest = Math.max(1, ...lines.map(line => Array.from(line).length));
   textScale?.set(.8 * Math.min(1, 11 / longest, 2.4 / lines.length));
   textInput.set(text.toLocaleUpperCase('es-AR'));
-  canvas.setAttribute('aria-label', text.replaceAll('\n', ' '));
+  canvas.setAttribute('aria-label', text.replaceAll('\n', ' ') || 'Pausa entre textos');
   for (const button of wordButtons) button.setAttribute('aria-pressed', 'false');
 }
 
@@ -42394,7 +42415,7 @@ function load() {
     const source = drawSpokenWords(now) ?? canvas;
     if (!mapper.active) return;
     try {
-      renderProjection(source);
+      renderProjection(source, work.classList.contains('inverted'));
     } catch (error) {
       exitFullscreen();
       statusLabel.textContent = 'No se pudo iniciar Mapping.';
@@ -42434,6 +42455,11 @@ function load() {
     });
   }
   wordCount.addEventListener('change', () => updateWordLimits(performance.now()));
+  invertColors.addEventListener('click', () => {
+    const inverted = !work.classList.contains('inverted');
+    work.classList.toggle('inverted', inverted);
+    invertColors.setAttribute('aria-pressed', String(inverted));
+  });
   idleTestButton.disabled = false;
   idleTestButton.addEventListener('click', () => {
     const startTest = idleTestStartedAt === null;
