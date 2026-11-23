@@ -1,4 +1,5 @@
 const builtins=[
+ {id:'ecos-y-palabras',title:'ECOS Y PALABRAS',subtitle:'Ondas luminosas · palabras en movimiento · mapping',url:'projects/ecos-y-palabras.html',thumbnail:'thumbnails/ecos-y-palabras.jpg',standalone:true},
  {id:'honesty-luck',title:'HONESTY / LUCK · Micrófono',subtitle:'Voz · texto reactivo y mapping de proyección',url:'projects/honesty-luck/',thumbnail:'thumbnails/honesty-luck.png?v=2',crop:'honesty-luck',standalone:true},
  {id:'particulas',title:'PARTÍCULAS',subtitle:'Franco · busto 3D y mapping de proyección',url:'projects/particulas.html',thumbnail:'thumbnails/particulas.png',position:'50% 44%'},
  {id:'ecos-luminosos',title:'ECOS LUMINOSOS',subtitle:'Cromo líquido · ondas reactivas al sonido',url:'projects/ecos-luminosos.html',thumbnail:'thumbnails/ecos-luminosos.jpg',standalone:true},
