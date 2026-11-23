@@ -42,9 +42,9 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
 #mapPanel .control { display:grid; grid-template-columns:1fr auto; background:transparent; }
 #mapPanel input[type=range] { grid-column:1/-1; width:100%; }
 #mapStatus { margin:.6rem 0 0; }
-#projectionView, #word-trail, #mapGrid { pointer-events:none; }
-#word-trail { mix-blend-mode:screen; }
-#work.projection-active #glcanvas, #work.projection-active #word-trail { opacity:0; }
+#projectionView, #speech-canvas, #mapGrid { pointer-events:none; }
+#work.speaking-visual #glcanvas { opacity:0; }
+#work.projection-active #glcanvas, #work.projection-active #speech-canvas { opacity:0; }
 :fullscreen #glcanvas, .clean-view #glcanvas { cursor:none; }
 #work.editing #glcanvas { cursor:default; }
 
@@ -53,7 +53,7 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
 <body>
 <main id="work" aria-label="HONESTY / LUCK, texto interactivo">
   <div id="canvascontainer"><canvas id="glcanvas" tabindex="0" aria-label="HONESTY"></canvas></div>
-  <canvas id="word-trail" aria-hidden="true" hidden></canvas>
+  <canvas id="speech-canvas" aria-hidden="true" hidden></canvas>
   <canvas id="projectionView" aria-hidden="true" hidden></canvas>
   <div id="mapOverlay" class="map-overlay" hidden>
     <canvas id="mapGrid" aria-hidden="true"></canvas>
@@ -98,15 +98,17 @@ a { margin-left:auto; color:#ccc; background:#000; padding:5px; text-decoration:
     </label>
     <label class="control" for="word-count">Palabras visibles
       <select id="word-count" disabled>
-        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+        <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>
         <option value="4">4</option><option value="5">5</option>
       </select>
     </label>
-    <label class="control" for="word-trail-mode">Palabras anteriores
-      <select id="word-trail-mode" disabled>
-        <option value="dissolve">Disolver</option>
-        <option value="persist">Fondo persistente</option>
-      </select>
+    <label class="control" for="persistence-count" title="Cantidad máxima de palabras anteriores que quedan en movimiento">Palabras persistentes
+      <input id="persistence-count" type="range" min="0" max="12" step="1" value="4" disabled>
+      <output id="persistence-count-value" for="persistence-count">4</output>
+    </label>
+    <label class="control" for="persistence-strength">Intensidad del fondo
+      <input id="persistence-strength" type="range" min="0" max="100" step="1" value="55" disabled>
+      <output id="persistence-strength-value" for="persistence-strength">55%</output>
     </label>
     <button type="button" id="fullscreen" aria-label="Pantalla completa (F)">Pantalla completa · F</button>
     <button type="button" id="mapping" aria-keyshortcuts="M">Mapping</button>
@@ -41410,7 +41412,6 @@ const canvas = document.querySelector('#glcanvas');
 const distortion = document.querySelector('#distortion');
 const distortionValue = document.querySelector('#distortion-value');
 const wordCount = document.querySelector('#word-count');
-const spokenWords = [];
 let preset = 'HONESTY';
 let textInput;
 let textScale;
@@ -41796,7 +41797,7 @@ function createProjectionMapper(stage, storageKey) {
 }
 
 function createProjectionRenderer(output, mapper) {
- let gl, program, buffer, texture, trailTexture, position, uv, placement, hasTrail, previousMesh;
+ let gl, program, buffer, texture, position, uv, placement, previousMesh;
  function init() {
   gl = output.getContext('webgl', {alpha:false, antialias:true});
   if (!gl) throw new Error('Mapping requiere WebGL.');
@@ -41824,12 +41825,8 @@ function createProjectionRenderer(output, mapper) {
     precision highp float;
     varying highp vec2 texCoord;
     uniform sampler2D image;
-    uniform sampler2D trail;
-    uniform bool hasTrail;
     void main() {
-      vec3 base = texture2D(image, texCoord).rgb;
-      vec3 history = hasTrail ? texture2D(trail, texCoord).rgb : vec3(0.);
-      gl_FragColor = vec4(base + (1. - base) * history, 1.);
+      gl_FragColor = vec4(texture2D(image, texCoord).rgb, 1.);
     }
   `);
   program = gl.createProgram();
@@ -41842,15 +41839,12 @@ function createProjectionRenderer(output, mapper) {
   position = gl.getAttribLocation(program, 'position');
   uv = gl.getAttribLocation(program, 'uv');
   placement = gl.getUniformLocation(program, 'placement');
-  hasTrail = gl.getUniformLocation(program, 'hasTrail');
   buffer = gl.createBuffer();
   texture = makeTexture();
-  trailTexture = makeTexture();
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
   gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
   gl.useProgram(program);
-  gl.uniform1i(gl.getUniformLocation(program, 'trail'), 1);
  }
  function makeTexture() {
   const texture = gl.createTexture();
@@ -41862,7 +41856,7 @@ function createProjectionRenderer(output, mapper) {
   return texture;
  }
 
- return function renderProjection(source, history) {
+ return function renderProjection(source) {
   if (!mapper.active || !source.width || !source.height) return;
   if (!gl) init();
   if (output.width !== source.width || output.height !== source.height) {
@@ -41888,12 +41882,6 @@ function createProjectionRenderer(output, mapper) {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-  gl.uniform1i(hasTrail, Number(Boolean(history)));
-  if (history) {
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, trailTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, history);
-  }
   gl.drawArrays(gl.TRIANGLES, 0, mesh.vertices.length / 4);
  };
 }
@@ -41904,64 +41892,184 @@ const projectionView = byId('projectionView');
 const renderProjection = createProjectionRenderer(projectionView, mapper);
 const isFullscreen = () => document.fullscreenElement === work || work.classList.contains('clean-view');
 
-const trailMode = byId('word-trail-mode');
-const trailCanvas = byId('word-trail');
-const trailContext = trailCanvas.getContext('2d');
-const trail = [];
-const trailLifetime = 10000;
-let trailSlot = 0;
+const persistenceCount = byId('persistence-count');
+const persistenceStrength = byId('persistence-strength');
+const speechCanvas = byId('speech-canvas');
+const speechContext = speechCanvas.getContext('2d', {alpha:false});
+const wordsInMotion = [];
+const foregroundLifetime = 3300;
+const persistenceLifetime = 10000;
+const dissolveLifetime = 740;
+const spawnPositions = [[.22,.30],[.77,.23],[.25,.73],[.77,.70],[.48,.48]];
+let spawnIndex = 0;
+let previousFrame = 0;
+let showingSpeech = false;
 
-function retireWord(word) {
-  trail.push({word, born: performance.now(), slot: trailSlot++ % 35});
+function makeWordSprite(word) {
+  const glyph = document.createElement('canvas');
+  const context = glyph.getContext('2d', {willReadFrequently:true});
+  const font = 'italic bold 23px "IBMPlexMono-BoldItalic", monospace';
+  context.font = font;
+  const measuredWidth = Math.ceil(context.measureText(word).width);
+  const height = 32;
+  glyph.width = Math.min(measuredWidth + 10, 248);
+  glyph.height = height;
+  context.font = font;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#fff';
+  context.fillText(word, glyph.width / 2, 15, glyph.width - 8);
+
+  const pixels = context.getImageData(0, 0, glyph.width, height).data;
+  const mask = Uint8Array.from({length: glyph.width * height}, (_, i) => pixels[i * 4 + 3]);
+  const output = document.createElement('canvas');
+  output.width = glyph.width;
+  output.height = height;
+  const outputContext = output.getContext('2d');
+  return {output, outputContext, mask, frame:outputContext.createImageData(output.width, height), lastTick:-1};
 }
 
-function resetTrail() {
-  trail.length = 0;
-  trailSlot = 0;
-  trailCanvas.hidden = true;
+function pixelRandom(x, y, seed) {
+  let bits = Math.imul(x + seed, 1597334677) ^ Math.imul(y + 1, 3812015801);
+  bits = Math.imul(bits ^ (bits >>> 16), 2246822507);
+  return ((bits ^ (bits >>> 13)) >>> 0) / 4294967296;
 }
 
-function drawTrail(now) {
-  while (trail.length && now - trail[0].born >= trailLifetime) trail.shift();
-  trailCanvas.hidden = trail.length === 0;
-  if (trailCanvas.hidden) return null;
-  const width = canvas.width;
-  const height = canvas.height;
-  if (trailCanvas.width !== width) trailCanvas.width = width;
-  if (trailCanvas.height !== height) trailCanvas.height = height;
-  trailContext.clearRect(0, 0, width, height);
-  trailContext.textAlign = 'center';
-  trailContext.textBaseline = 'middle';
-  trailContext.fillStyle = '#fff';
-  for (const {word, born, slot} of trail) {
-    const x = (.16 + ((slot * 2) % 5) * .17) * width;
-    const y = (.15 + (slot % 7) * .115) * height;
-    const size = Math.min(height * .068, width * .29 / Math.max(4, Array.from(word).length * .6));
-    trailContext.font = size + 'px IBMPlexMono-BoldItalic, monospace';
-    trailContext.globalAlpha = .3 * (1 - (now - born) / trailLifetime) ** 1.45;
-    trailContext.fillText(word, x, y);
+function updateWordSprite(item, now, distortionAmount, erosion) {
+  const sprite = item.sprite;
+  const tick = Math.floor(now / 56);
+  if (sprite.lastTick === tick) return;
+  sprite.lastTick = tick;
+  const {width, height} = sprite.output;
+  const {data} = sprite.frame;
+  const block = distortionAmount * .9 + erosion * .35;
+  const time = tick * .085;
+  for (let y = 0; y < height; y++) {
+    const shift = Math.round(block * (3 * Math.sin(y * .47 + time + item.seed) +
+      (pixelRandom(Math.floor(y / 3), tick, item.seed) - .5) * 5));
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const grain = pixelRandom(x, y, item.seed);
+      const sampleX = x + shift;
+      const sampleY = Math.max(0, Math.min(height - 1, y + Math.round(
+        block * 1.6 * Math.sin(x * .34 + time + item.seed))));
+      const alpha = sampleX >= 0 && sampleX < width ? sprite.mask[sampleY * width + sampleX] : 0;
+      const echo = sprite.mask[sampleY * width + Math.min(width - 1, Math.max(0, sampleX + 3))];
+      const shade = 255 - Math.round(60 * distortionAmount * (1 - grain));
+      data[i] = data[i + 1] = data[i + 2] = shade;
+      data[i + 3] = grain < erosion ? 0 : Math.max(alpha, echo * distortionAmount * .28);
+    }
   }
-  return trailCanvas;
+  sprite.outputContext.putImageData(sprite.frame, 0, 0);
 }
 
-function renderWords() {
-  if (!textInput) return;
-  const words = spokenWords.length ? spokenWords.slice(-Number(wordCount.value)) : [preset];
-  const longestWord = Math.max(...words.map(value => Array.from(value).length));
-  const scale = 0.8 * Math.min(1, 8 / longestWord, 2.4 / words.length);
-  textScale?.set(scale);
-  textInput.set(words.join('\n'));
-  canvas.setAttribute('aria-label', words.join(' '));
+function syncWordLabels() {
+  const foreground = wordsInMotion.filter(item => item.retiredAt === null);
+  const label = showingSpeech ? foreground.map(item => item.word).join(' ') || 'Palabras en disolución' : preset;
+  canvas.setAttribute('aria-label', label);
   for (const button of wordButtons) {
-    button.setAttribute('aria-pressed', String(!spokenWords.length && button.dataset.word === preset));
+    button.setAttribute('aria-pressed', String(!showingSpeech && button.dataset.word === preset));
   }
+}
+
+function resetWords() {
+  wordsInMotion.length = 0;
+  spawnIndex = 0;
+  previousFrame = 0;
+  showingSpeech = false;
+  speechCanvas.hidden = true;
+  work.classList.remove('speaking-visual');
+  syncWordLabels();
+}
+
+function updateWordLimits(now) {
+  const foreground = wordsInMotion.filter(item => item.retiredAt === null);
+  const excess = Math.max(0, foreground.length - Number(wordCount.value));
+  foreground.forEach((item, index) => {
+    if (index < excess || now - item.born >= foregroundLifetime) item.retiredAt = now;
+  });
+
+  const retired = wordsInMotion.filter(item => item.retiredAt !== null && item.exitAt === null);
+  const overLimit = retired.length - Number(persistenceCount.value);
+  retired.forEach((item, index) => {
+    if (index < overLimit || now - item.retiredAt >= persistenceLifetime - dissolveLifetime) item.exitAt = now;
+  });
+
+  for (let i = wordsInMotion.length - 1; i >= 0; i--) {
+    const {exitAt} = wordsInMotion[i];
+    if (exitAt !== null && now - exitAt >= dissolveLifetime) wordsInMotion.splice(i, 1);
+  }
+  if (excess || foreground.some(item => item.retiredAt !== null)) syncWordLabels();
+}
+
+function addSpokenWord(word, now = performance.now()) {
+  const index = spawnIndex++;
+  const [x,y] = spawnPositions[index % spawnPositions.length];
+  const seed = index + 27;
+  const vx = (x > .5 ? 1 : -1) * (.050 + .019 * pixelRandom(1, 3, seed));
+  const vy = (y > .5 ? 1 : -1) * (.029 + .022 * pixelRandom(7, 2, seed));
+  wordsInMotion.push({word, x, y, vx, vy, seed, born:now, retiredAt:null, exitAt:null, sprite:makeWordSprite(word)});
+  showingSpeech = true;
+  speechCanvas.hidden = false;
+  work.classList.add('speaking-visual');
+  updateWordLimits(now);
+  syncWordLabels();
+}
+
+function bounceWord(item, axis, speed, edge, delta) {
+  item[axis] += item[speed] * delta;
+  if ((item[axis] <= edge && item[speed] < 0) || (item[axis] >= 1 - edge && item[speed] > 0)) {
+    item[speed] *= -1;
+  }
+  item[axis] = Math.max(edge, Math.min(1 - edge, item[axis]));
+}
+
+function drawSpokenWords(now) {
+  if (!showingSpeech) return null;
+  updateWordLimits(now);
+  const delta = previousFrame ? Math.min(.05, Math.max(0, now - previousFrame) / 1000) : 0;
+  previousFrame = now;
+  const width = Math.max(1, canvas.width);
+  const height = Math.max(1, canvas.height);
+  if (speechCanvas.width !== width) speechCanvas.width = width;
+  if (speechCanvas.height !== height) speechCanvas.height = height;
+  speechContext.fillStyle = '#000';
+  speechContext.fillRect(0, 0, width, height);
+  speechContext.imageSmoothingEnabled = false;
+  const amount = Number(distortion.value) / 100;
+  const strength = Number(persistenceStrength.value) / 100;
+  for (const item of wordsInMotion) {
+    const age = now - item.born;
+    const scaleIn = .63 + .37 * (1 - Math.exp(-age / 275));
+    const memory = item.retiredAt === null ? 0 : (now - item.retiredAt) / persistenceLifetime;
+    const transition = Math.min(1, memory * 11);
+    const fade = item.exitAt === null ? 0 : Math.min(1, (now - item.exitAt) / dissolveLifetime);
+    const naturalFade = Math.max(0, 1 - memory * 1.18);
+    const brightness = (1 - transition + transition * strength * naturalFade) * (1 - fade);
+    const scale = scaleIn * (1 - .27 * transition - .16 * memory) * (1 - .35 * fade);
+    const erosion = Math.min(.99, memory * .46 + fade * .93);
+    const {width: glyphWidth, height:glyphHeight} = item.sprite.output;
+    const base = Math.min(width * .49 / glyphWidth, height * .30 / glyphHeight);
+    const drawWidth = glyphWidth * base * scale;
+    const drawHeight = glyphHeight * base * scale;
+    bounceWord(item, 'x', 'vx', drawWidth / (2 * width) + .011, delta);
+    bounceWord(item, 'y', 'vy', drawHeight / (2 * height) + .011, delta);
+    if (brightness <= .002) continue;
+
+    updateWordSprite(item, now, amount, erosion);
+    speechContext.globalAlpha = brightness;
+    speechContext.drawImage(item.sprite.output, Math.round(item.x * width - drawWidth / 2),
+      Math.round(item.y * height - drawHeight / 2), drawWidth, drawHeight);
+  }
+  speechContext.globalAlpha = 1;
+  return speechCanvas;
 }
 
 function selectWord(next) {
   preset = next;
-  spokenWords.length = 0;
-  resetTrail();
-  renderWords();
+  textScale?.set(.8);
+  textInput?.set(next);
+  resetWords();
 }
 
 const microphone = document.querySelector('#microphone');
@@ -41973,11 +42081,7 @@ let nextWordTimer;
 
 function showNextSpokenWord() {
   if (nextWordTimer !== undefined || queue.length === 0) return;
-  const previous = spokenWords.at(-Number(wordCount.value));
-  if (previous && trailMode.value === 'persist') retireWord(previous);
-  spokenWords.push(queue.shift());
-  if (spokenWords.length > 5) spokenWords.shift();
-  renderWords();
+  addSpokenWord(queue.shift());
   nextWordTimer = setTimeout(() => {
     nextWordTimer = undefined;
     showNextSpokenWord();
@@ -42016,9 +42120,7 @@ function startMicrophone() {
   recognition.interimResults = false;
   const session = { recognition, restart: undefined, running: false, displayed: 0 };
   speechSession = session;
-  spokenWords.length = 0;
-  resetTrail();
-  renderWords();
+  resetWords();
 
   function startListening() {
     if (speechSession !== session) return;
@@ -42152,10 +42254,10 @@ function load() {
   });
   CABLES.patch = patch;
   patch.on('onRenderFrame', () => {
-    const history = drawTrail(performance.now());
+    const source = drawSpokenWords(performance.now()) ?? canvas;
     if (!mapper.active) return;
     try {
-      renderProjection(canvas, history);
+      renderProjection(source);
     } catch (error) {
       exitFullscreen();
       statusLabel.textContent = 'No se pudo iniciar Mapping.';
@@ -42187,19 +42289,16 @@ function load() {
   distortion.disabled = false;
   wordCount.disabled = false;
   distortion.addEventListener('input', adjustDistortion);
-  trailMode.disabled = false;
-  trailMode.addEventListener('change', resetTrail);
-  let previousCount = Number(wordCount.value);
-  wordCount.addEventListener('change', () => {
-    const count = Number(wordCount.value);
-    if (trailMode.value === 'persist' && count < previousCount) {
-      for (const value of spokenWords.slice(-previousCount).slice(0, -count)) retireWord(value);
-    }
-    previousCount = count;
-    renderWords();
-  });
+  for (const [input, suffix] of [[persistenceCount, ''], [persistenceStrength, '%']]) {
+    input.disabled = false;
+    input.addEventListener('input', () => {
+      byId(input.id + '-value').value = input.value + suffix;
+      updateWordLimits(performance.now());
+    });
+  }
+  wordCount.addEventListener('change', () => updateWordLimits(performance.now()));
   adjustDistortion();
-  renderWords();
+  selectWord(preset);
   configureVoice();
 }
 
