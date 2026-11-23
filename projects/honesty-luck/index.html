@@ -41900,34 +41900,19 @@ const wordsInMotion = [];
 const foregroundLifetime = 3300;
 const persistenceLifetime = 10000;
 const dissolveLifetime = 740;
-const spawnPositions = [[.22,.30],[.77,.23],[.25,.73],[.77,.70],[.48,.48]];
 let spawnIndex = 0;
 let previousFrame = 0;
 let showingSpeech = false;
 
-function makeWordSprite(word) {
-  const glyph = document.createElement('canvas');
-  const context = glyph.getContext('2d', {willReadFrequently:true});
-  const font = 'italic bold 23px "IBMPlexMono-BoldItalic", monospace';
-  context.font = font;
-  const measuredWidth = Math.ceil(context.measureText(word).width);
-  const height = 32;
-  glyph.width = Math.min(measuredWidth + 10, 248);
-  glyph.height = height;
-  context.font = font;
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillStyle = '#fff';
-  context.fillText(word, glyph.width / 2, 15, glyph.width - 8);
-
-  const pixels = context.getImageData(0, 0, glyph.width, height).data;
-  const mask = Uint8Array.from({length: glyph.width * height}, (_, i) => pixels[i * 4 + 3]);
-  const output = document.createElement('canvas');
-  output.width = glyph.width;
-  output.height = height;
-  const outputContext = output.getContext('2d');
-  return {output, outputContext, mask, frame:outputContext.createImageData(output.width, height), lastTick:-1};
-}
+const captureCanvas = document.createElement('canvas');
+const captureContext = captureCanvas.getContext('2d', {willReadFrequently:true});
+const echoCanvas = document.createElement('canvas');
+const echoContext = echoCanvas.getContext('2d');
+const clipFrameLimit = 8;
+const captureInterval = 75;
+let displayedWords = [];
+let captureAfter = 0;
+let lastCapture = -Infinity;
 
 function pixelRandom(x, y, seed) {
   let bits = Math.imul(x + seed, 1597334677) ^ Math.imul(y + 1, 3812015801);
@@ -41935,32 +41920,127 @@ function pixelRandom(x, y, seed) {
   return ((bits ^ (bits >>> 13)) >>> 0) / 4294967296;
 }
 
-function updateWordSprite(item, now, distortionAmount, erosion) {
-  const sprite = item.sprite;
-  const tick = Math.floor(now / 56);
-  if (sprite.lastTick === tick) return;
-  sprite.lastTick = tick;
-  const {width, height} = sprite.output;
-  const {data} = sprite.frame;
-  const block = distortionAmount * .9 + erosion * .35;
-  const time = tick * .085;
+function captureWordFrames(now) {
+  const count = displayedWords.length;
+  if (!count || now < captureAfter || now - lastCapture < captureInterval ||
+      !canvas.width || !canvas.height) return;
+  lastCapture = now;
+  const bufferScale = Math.min(1, 256 / Math.max(canvas.width, canvas.height));
+  const width = Math.max(1, Math.round(canvas.width * bufferScale));
+  const height = Math.max(1, Math.round(canvas.height * bufferScale));
+  if (captureCanvas.width !== width) captureCanvas.width = width;
+  if (captureCanvas.height !== height) captureCanvas.height = height;
+  captureContext.clearRect(0, 0, width, height);
+  captureContext.imageSmoothingEnabled = false;
+  captureContext.drawImage(canvas, 0, 0, width, height);
+  const {data} = captureContext.getImageData(0, 0, width, height);
+
+  const rows = new Uint16Array(height);
+  const left = new Uint16Array(height).fill(width);
+  const right = new Uint16Array(height);
   for (let y = 0; y < height; y++) {
-    const shift = Math.round(block * (3 * Math.sin(y * .47 + time + item.seed) +
-      (pixelRandom(Math.floor(y / 3), tick, item.seed) - .5) * 5));
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
-      const grain = pixelRandom(x, y, item.seed);
-      const sampleX = x + shift;
-      const sampleY = Math.max(0, Math.min(height - 1, y + Math.round(
-        block * 1.6 * Math.sin(x * .34 + time + item.seed))));
-      const alpha = sampleX >= 0 && sampleX < width ? sprite.mask[sampleY * width + sampleX] : 0;
-      const echo = sprite.mask[sampleY * width + Math.min(width - 1, Math.max(0, sampleX + 3))];
-      const shade = 255 - Math.round(60 * distortionAmount * (1 - grain));
-      data[i] = data[i + 1] = data[i + 2] = shade;
-      data[i + 3] = grain < erosion ? 0 : Math.max(alpha, echo * distortionAmount * .28);
+      if (data[i + 3] < 40 || Math.max(data[i], data[i + 1], data[i + 2]) < 92) continue;
+      rows[y]++;
+      left[y] = Math.min(left[y], x);
+      right[y] = x + 1;
     }
   }
-  sprite.outputContext.putImageData(sprite.frame, 0, 0);
+
+  const peak = Math.max(...rows);
+  if (!peak) return;
+  const threshold = Math.max(2, Math.ceil(peak * .075));
+  const top = rows.findIndex(value => value >= threshold);
+  const bottom = rows.findLastIndex(value => value >= threshold) + 1;
+  if (top < 0 || bottom - top < count * 3) return;
+  const step = (bottom - top) / count;
+  const cuts = [top];
+  for (let line = 1; line < count; line++) {
+    const ideal = top + line * step;
+    const from = Math.max(cuts.at(-1) + 2, Math.floor(ideal - step * .24));
+    const to = Math.min(bottom - 2, Math.ceil(ideal + step * .24));
+    let cut = Math.round(ideal);
+    let lowest = Infinity;
+    for (let y = from; y <= to; y++) {
+      const score = rows[y] + Math.abs(y - ideal) * .24;
+      if (score < lowest) {
+        lowest = score;
+        cut = y;
+      }
+    }
+    cuts.push(cut);
+  }
+  cuts.push(bottom);
+
+  for (let line = 0; line < count; line++) {
+    let x0 = width, x1 = 0;
+    let y0 = cuts[line], y1 = cuts[line + 1];
+    while (y0 < y1 && rows[y0] < threshold) y0++;
+    while (y1 > y0 && rows[y1 - 1] < threshold) y1--;
+    for (let y = y0; y < y1; y++) {
+      if (rows[y] < threshold) continue;
+      x0 = Math.min(x0, left[y]);
+      x1 = Math.max(x1, right[y]);
+    }
+    if (x1 <= x0 || y1 <= y0) continue;
+    x0 = Math.max(0, x0 - 4);
+    x1 = Math.min(width, x1 + 4);
+    y0 = Math.max(line === 0 ? 0 : cuts[line], y0 - 3);
+    y1 = Math.min(line === count - 1 ? height : cuts[line + 1], y1 + 3);
+    const w = x1 - x0, h = y1 - y0;
+    const image = captureContext.getImageData(x0, y0, w, h);
+    const clip = displayedWords[line].clip;
+    clip.push({image, x:(x0 + w / 2) / width, y:(y0 + h / 2) / height, w:w / width, h:h / height});
+    if (clip.length > clipFrameLimit) clip.shift();
+  }
+}
+
+function outputCablesWords(now) {
+  const foreground = wordsInMotion.filter(item => item.retiredAt === null);
+  if (foreground.length === displayedWords.length && foreground.every((item, i) => item === displayedWords[i])) return;
+  displayedWords = foreground;
+  const longest = Math.max(1, ...foreground.map(item => Array.from(item.word).length));
+  textScale?.set(.8 * Math.min(1, 8 / longest, 2.4 / Math.max(1, foreground.length)));
+  textInput?.set(foreground.map(item => item.word).join('\n'));
+  captureAfter = now + 95;
+  syncWordLabels();
+}
+
+function drawEcho(item, now, delta, width, height, strength) {
+  const {clip} = item;
+  if (!clip.length) return;
+  const elapsed = now - item.retiredAt;
+  const travel = Math.floor(elapsed / captureInterval);
+  const cycle = Math.max(1, 2 * (clip.length - 1));
+  const phase = travel % cycle;
+  const snapshot = clip[clip.length - 1 - Math.min(phase, cycle - phase)];
+  const memory = elapsed / persistenceLifetime;
+  const transition = Math.min(1, memory * 11);
+  const fade = item.exitAt === null ? 0 : Math.min(1, (now - item.exitAt) / dissolveLifetime);
+  const brightness = (1 - transition + transition * strength * Math.max(0, 1 - memory * 1.18)) * (1 - fade);
+  const scale = (1 - .27 * transition - .16 * memory) * (1 - .35 * fade);
+  const drawWidth = Math.min(width * .98, snapshot.w * width * scale);
+  const drawHeight = Math.min(height * .98, snapshot.h * height * scale);
+  bounceWord(item, 'x', 'vx', drawWidth / (2 * width) + .005, delta);
+  bounceWord(item, 'y', 'vy', drawHeight / (2 * height) + .005, delta);
+  if (brightness <= .002) return;
+  const {image} = snapshot;
+  if (echoCanvas.width !== image.width) echoCanvas.width = image.width;
+  if (echoCanvas.height !== image.height) echoCanvas.height = image.height;
+  echoContext.putImageData(image, 0, 0);
+  const erosion = Math.min(1, memory * .40 + fade * .95);
+  echoContext.globalCompositeOperation = 'destination-out';
+  echoContext.fillStyle = '#fff';
+  for (let y = 0; y < image.height; y += 2) {
+    for (let x = 0; x < image.width; x += 2) {
+      if (pixelRandom(x, y, item.seed) < erosion) echoContext.fillRect(x, y, 2, 2);
+    }
+  }
+  echoContext.globalCompositeOperation = 'source-over';
+  speechContext.globalAlpha = brightness;
+  speechContext.drawImage(echoCanvas, Math.round(item.x * width - drawWidth / 2),
+    Math.round(item.y * height - drawHeight / 2), drawWidth, drawHeight);
 }
 
 function syncWordLabels() {
@@ -41976,7 +42056,11 @@ function resetWords() {
   wordsInMotion.length = 0;
   spawnIndex = 0;
   previousFrame = 0;
+  displayedWords = [];
+  lastCapture = -Infinity;
   showingSpeech = false;
+  textScale?.set(.8);
+  textInput?.set(preset);
   speechCanvas.hidden = true;
   work.classList.remove('speaking-visual');
   syncWordLabels();
@@ -41986,7 +42070,13 @@ function updateWordLimits(now) {
   const foreground = wordsInMotion.filter(item => item.retiredAt === null);
   const excess = Math.max(0, foreground.length - Number(wordCount.value));
   foreground.forEach((item, index) => {
-    if (index < excess || now - item.born >= foregroundLifetime) item.retiredAt = now;
+    if (index >= excess && now - item.born < foregroundLifetime) return;
+    item.retiredAt = now;
+    const latest = item.clip.at(-1);
+    item.x = latest?.x ?? .5;
+    item.y = latest?.y ?? .5;
+    item.vx = (item.seed % 2 ? 1 : -1) * (.055 + .017 * pixelRandom(1, 3, item.seed));
+    item.vy = (item.seed % 3 ? 1 : -1) * (.033 + .019 * pixelRandom(7, 2, item.seed));
   });
 
   const retired = wordsInMotion.filter(item => item.retiredAt !== null && item.exitAt === null);
@@ -41999,21 +42089,16 @@ function updateWordLimits(now) {
     const {exitAt} = wordsInMotion[i];
     if (exitAt !== null && now - exitAt >= dissolveLifetime) wordsInMotion.splice(i, 1);
   }
-  if (excess || foreground.some(item => item.retiredAt !== null)) syncWordLabels();
+  if (showingSpeech) outputCablesWords(now);
 }
 
 function addSpokenWord(word, now = performance.now()) {
-  const index = spawnIndex++;
-  const [x,y] = spawnPositions[index % spawnPositions.length];
-  const seed = index + 27;
-  const vx = (x > .5 ? 1 : -1) * (.050 + .019 * pixelRandom(1, 3, seed));
-  const vy = (y > .5 ? 1 : -1) * (.029 + .022 * pixelRandom(7, 2, seed));
-  wordsInMotion.push({word, x, y, vx, vy, seed, born:now, retiredAt:null, exitAt:null, sprite:makeWordSprite(word)});
+  captureWordFrames(now);
+  wordsInMotion.push({word, seed:spawnIndex++ + 27, born:now, retiredAt:null, exitAt:null, clip:[]});
   showingSpeech = true;
   speechCanvas.hidden = false;
   work.classList.add('speaking-visual');
   updateWordLimits(now);
-  syncWordLabels();
 }
 
 function bounceWord(item, axis, speed, edge, delta) {
@@ -42026,6 +42111,7 @@ function bounceWord(item, axis, speed, edge, delta) {
 
 function drawSpokenWords(now) {
   if (!showingSpeech) return null;
+  captureWordFrames(now);
   updateWordLimits(now);
   const delta = previousFrame ? Math.min(.05, Math.max(0, now - previousFrame) / 1000) : 0;
   previousFrame = now;
@@ -42036,39 +42122,19 @@ function drawSpokenWords(now) {
   speechContext.fillStyle = '#000';
   speechContext.fillRect(0, 0, width, height);
   speechContext.imageSmoothingEnabled = false;
-  const amount = Number(distortion.value) / 100;
+  if (displayedWords.length) speechContext.drawImage(canvas, 0, 0, width, height);
   const strength = Number(persistenceStrength.value) / 100;
+  speechContext.globalCompositeOperation = 'screen';
   for (const item of wordsInMotion) {
-    const age = now - item.born;
-    const scaleIn = .63 + .37 * (1 - Math.exp(-age / 275));
-    const memory = item.retiredAt === null ? 0 : (now - item.retiredAt) / persistenceLifetime;
-    const transition = Math.min(1, memory * 11);
-    const fade = item.exitAt === null ? 0 : Math.min(1, (now - item.exitAt) / dissolveLifetime);
-    const naturalFade = Math.max(0, 1 - memory * 1.18);
-    const brightness = (1 - transition + transition * strength * naturalFade) * (1 - fade);
-    const scale = scaleIn * (1 - .27 * transition - .16 * memory) * (1 - .35 * fade);
-    const erosion = Math.min(.99, memory * .46 + fade * .93);
-    const {width: glyphWidth, height:glyphHeight} = item.sprite.output;
-    const base = Math.min(width * .49 / glyphWidth, height * .30 / glyphHeight);
-    const drawWidth = glyphWidth * base * scale;
-    const drawHeight = glyphHeight * base * scale;
-    bounceWord(item, 'x', 'vx', drawWidth / (2 * width) + .011, delta);
-    bounceWord(item, 'y', 'vy', drawHeight / (2 * height) + .011, delta);
-    if (brightness <= .002) continue;
-
-    updateWordSprite(item, now, amount, erosion);
-    speechContext.globalAlpha = brightness;
-    speechContext.drawImage(item.sprite.output, Math.round(item.x * width - drawWidth / 2),
-      Math.round(item.y * height - drawHeight / 2), drawWidth, drawHeight);
+    if (item.retiredAt !== null) drawEcho(item, now, delta, width, height, strength);
   }
+  speechContext.globalCompositeOperation = 'source-over';
   speechContext.globalAlpha = 1;
   return speechCanvas;
 }
 
 function selectWord(next) {
   preset = next;
-  textScale?.set(.8);
-  textInput?.set(next);
   resetWords();
 }
 
