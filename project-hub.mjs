@@ -1,5 +1,5 @@
 const builtins=[
- {id:'honesty-luck',title:'HONESTY / LUCK · Micrófono',subtitle:'Voz · texto reactivo y mapping de proyección',url:'projects/honesty-luck/',thumbnail:'thumbnails/honesty-luck.png',fit:'contain',standalone:true},
+ {id:'honesty-luck',title:'HONESTY / LUCK · Micrófono',subtitle:'Voz · texto reactivo y mapping de proyección',url:'projects/honesty-luck/',thumbnail:'thumbnails/honesty-luck.png?v=2',crop:'honesty-luck',standalone:true},
  {id:'particulas',title:'PARTÍCULAS',subtitle:'Franco · busto 3D y mapping de proyección',url:'projects/particulas.html',thumbnail:'thumbnails/particulas.png',position:'50% 44%'},
  {id:'ecos-luminosos',title:'ECOS LUMINOSOS',subtitle:'Cromo líquido · ondas reactivas al sonido',url:'projects/ecos-luminosos.html',thumbnail:'thumbnails/ecos-luminosos.jpg',standalone:true},
  {id:'freemapper',title:'FREE MAPPER',subtitle:'Mapping de proyección',url:'https://freemapper.app/app.html',image:'freemapper',external:true},
