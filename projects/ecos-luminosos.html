@@ -29,6 +29,14 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 306px;gap:16px;align-items
 body:has(.stage.projection-fullwindow){overflow:hidden}
 .stage:fullscreen>#view,.stage.projection-fullwindow>#view{object-fit:fill}
 .stage>#view.projection-unavailable{object-fit:contain}
+.playback-bar{position:relative}
+.delay-control summary{display:block;min-height:40px;padding:7px 12px;background:#211f2a;border:1px solid #393445;border-radius:9px;cursor:pointer;list-style:none}
+.delay-control summary::-webkit-details-marker{display:none}
+.delay-control summary:hover,.delay-control[open] summary{border-color:#a490b6}
+.delay-control summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.delay-options{position:absolute;z-index:2;left:13px;bottom:calc(100% + 4px);width:min(250px,calc(100% - 26px));padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
+.delay-options .range{margin:0}
+.delay-control output{color:var(--accent);font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -56,7 +64,17 @@ body:has(.stage.projection-fullwindow){overflow:hidden}
     <p id="projectionStatus" class="micro" role="status">Arrastrá los pines para ajustar la proyección.</p>
   </section>
 </div>
-<div class="bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button><button id="showMask" aria-pressed="false">Ver máscara</button><button id="fullscreen">Pantalla completa</button><button id="mapping" title="M">Mapping</button></div><span>Arrastrá una imagen a la vista</span></div>
+<div class="bar playback-bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button>
+<details class="delay-control">
+  <summary>Delay · <output for="audioDelay" id="audioDelayOut">2,5 s</output></summary>
+  <div class="delay-options">
+    <div class="range">
+      <label for="audioDelay">Ondas al dejar de hablar</label>
+      <input id="audioDelay" type="range" min="0" max="8" step="0.1" value="2.5">
+    </div>
+  </div>
+</details>
+<button id="showMask" aria-pressed="false">Ver máscara</button><button id="fullscreen">Pantalla completa</button><button id="mapping" title="M">Mapping</button></div><span>Arrastrá una imagen a la vista</span></div>
 </div>
 <p id="notice" class="notice" role="status"></p>
 <p id="micStatus" class="notice" role="status" hidden></p>
@@ -549,6 +567,7 @@ let photoTexture;
 let photoSequence = 0;
 let microphone;
 let micRequest = 0;
+let audioDelay = Number(byId('audioDelay').value);
 const maxEchoes = 12;
 const echoes = [];
 const echoUniform = new Float32Array(maxEchoes * 2);
@@ -582,7 +601,7 @@ uniform float photoActive, deformation, chrome, showWaves, frameRadius;
 uniform float showGrayEdge, edgeFade;
 uniform float phase, spacing, thickness, halo, power, boundary, radial, maskOnly, distanceScale, insideScale;
 uniform float haloShift, glintPower, glintOffset;
-uniform float audioMode;
+uniform float audioMode, audioTail, audioTailFront;
 uniform float sourcePixelsPerScreenPixel;
 uniform vec2 soundEchoes[${maxEchoes}];
 
@@ -676,11 +695,17 @@ void main() {
   float frameEmission = 1.;
   float slope = sin(cycle * 6.283185) * .84 + sin(cycle * 12.56637) * .16;
   if (audioMode > .5) {
-    crest = 0.;
-    bloom = 0.;
-    shapeEmission = 0.;
-    frameEmission = 0.;
-    slope = 0.;
+    // The wake travels with the voice pulse and only exists behind its crest.
+    float behind = (audioTailFront - wave) / spacing;
+    float wake = audioTail * smoothstep(.10, .62, behind);
+    float wakeBand = fract(-behind + .5) - .5;
+    float wakeHalo = fract(-behind - haloShift * .28 + .5) - .5;
+    crest = wake * .75 * crestGain * exp(-square(wakeBand / crestWidth));
+    bloom = wake * .9 * (.62 * exp(-square(wakeHalo / mix(.05, .27, halo)))
+                      + .38 * exp(-abs(wakeHalo) / mix(.035, .32, halo)));
+    shapeEmission = wake * .2;
+    frameEmission = wake * .2;
+    slope = -wake * (sin(behind * 6.283185) * .84 + sin(behind * 12.56637) * .16);
     for (int i = 0; i < ${maxEchoes}; i++) {
       vec2 echo = soundEchoes[i];
       if (echo.y > 0.) {
@@ -789,7 +814,7 @@ function createRenderer() {
   const position = gl.getAttribLocation(program, 'position');
   gl.enableVertexAttribArray(position);
   gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-  const names = ['packedDistances', 'sourceMask', 'backgroundPhoto', 'waveField', 'waveFieldSize', 'photoFit', 'photoActive', 'backgroundColor', 'deformation', 'chrome', 'showWaves', 'frameRadius', 'size', 'origin', 'color', 'phase', 'spacing', 'thickness', 'halo', 'power', 'boundary', 'radial', 'maskOnly', 'distanceScale', 'insideScale', 'glintAxis', 'glintPower', 'glintOffset', 'haloShift', 'audioMode', 'sourcePixelsPerScreenPixel'];
+  const names = ['packedDistances', 'sourceMask', 'backgroundPhoto', 'waveField', 'waveFieldSize', 'photoFit', 'photoActive', 'backgroundColor', 'deformation', 'chrome', 'showWaves', 'frameRadius', 'size', 'origin', 'color', 'phase', 'spacing', 'thickness', 'halo', 'power', 'boundary', 'radial', 'maskOnly', 'distanceScale', 'insideScale', 'glintAxis', 'glintPower', 'glintOffset', 'haloShift', 'audioMode', 'audioTail', 'audioTailFront', 'sourcePixelsPerScreenPixel'];
   const locations = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, name)]));
   locations.soundEchoes = gl.getUniformLocation(program, 'soundEchoes[0]');
   locations.showGrayEdge = gl.getUniformLocation(program, 'showGrayEdge');
@@ -1132,6 +1157,8 @@ function render() {
   gl.uniform1f(u.distanceScale, analysis.distanceScale);
   gl.uniform1f(u.insideScale, analysis.maxInside);
   gl.uniform1f(u.audioMode, Number(Boolean(microphone)));
+  gl.uniform1f(u.audioTail, trailingWave());
+  gl.uniform1f(u.audioTailFront, microphone?.tailFront ?? 0);
   if (microphone) {
     echoUniform.fill(0);
     for (const [index, echo] of echoes.entries()) {
@@ -1144,9 +1171,19 @@ function render() {
   if (mapped) projection.draw();
 }
 
-function advanceEchoes(state, delta, speed, spacing) {
+function trailingWave() {
+  if (!microphone || microphone.tailFront === null || microphone.sounding || audioDelay <= 0) return 0;
+  const quiet = (performance.now() - microphone.lastSoundAt) / 1000;
+  if (quiet >= audioDelay) return 0;
+  const remaining = 1 - quiet / audioDelay;
+  const onset = Math.min(1, quiet / Math.min(.12, audioDelay * .25));
+  return .4 * onset * remaining * remaining * (3 - 2 * remaining);
+}
+
+function advanceEchoes(state, delta, speed, spacing, now) {
   const travel = delta * Math.max(.20, speed * .015);
   for (const echo of echoes) echo.position += travel;
+  if (state.tailFront !== null) state.tailFront += travel;
   while (echoes.length && echoes[0].position >= 1.10) echoes.shift();
 
   state.analyser.getFloatTimeDomainData(state.samples);
@@ -1162,11 +1199,13 @@ function advanceEchoes(state, delta, speed, spacing) {
   const sounding = rms >= gate * (state.sounding ? .72 : 1);
   if (!sounding) state.noise += (rms - state.noise) * Math.min(1, delta * 4);
   state.sounding = sounding;
+  if (sounding) state.lastSoundAt = now;
 
   const latest = echoes[echoes.length - 1];
   if (sounding && (!latest || latest.position >= Math.max(.10, spacing))) {
     const strength = Math.min(1, .42 + .52 * Math.log2(Math.max(1, rms / gate)));
     echoes.push({position: 0, strength});
+    state.tailFront = 0;
   }
 }
 
@@ -1233,7 +1272,7 @@ async function toggleMicrophone() {
       context.close().catch(() => {});
       return;
     }
-    microphone = {context, stream, input, analyser, samples: new Float32Array(analyser.fftSize), noise: .003, sounding: false};
+    microphone = {context, stream, input, analyser, samples: new Float32Array(analyser.fftSize), noise: .003, sounding: false, lastSoundAt: -Infinity, tailFront: null};
     for (const track of stream.getAudioTracks()) {
       track.addEventListener('ended', () => {
         if (microphone?.stream !== stream) return;
@@ -1269,7 +1308,7 @@ function animate(time) {
     const delta = lastTime === undefined ? 0 : Math.min(.06, (time - lastTime) / 1000);
     const speed = Number(byId('speed').value);
     if (microphone) {
-      advanceEchoes(microphone, delta, speed, Number(byId('spacing').value) / 100);
+      advanceEchoes(microphone, delta, speed, Number(byId('spacing').value) / 100, time);
       phase = (phase + delta * .18) % 1;
     } else {
       const direction = byId('direction').value === 'out' ? 1 : -1;
@@ -1422,6 +1461,11 @@ byId('removePhoto').onclick = () => {
   refresh();
 };
 byId('microphone').onclick = toggleMicrophone;
+byId('audioDelay').oninput = (event) => {
+  audioDelay = Number(event.currentTarget.value);
+  byId('audioDelayOut').value = audioDelay.toLocaleString('es-AR') + ' s';
+  render();
+};
 window.addEventListener('pagehide', () => {
   stopMicrophone();
   refresh();
