@@ -199,7 +199,7 @@ body.presenting #usb-panel{display:none}
       </label>
       <button id="usb-arm" type="button" disabled>Preparar micrófono USB</button>
     </div>
-    <p id="usb-mic-state" class="status" role="status">Prepará el micrófono una vez desde esta pantalla.</p>
+    <p id="usb-mic-state" class="status" role="status">Con la placa conectada, hacé clic en la app para preparar el micrófono.</p>
     <p id="usb-auto-state" class="status" role="status"></p>
     <div class="usb-actions" data-usb-actions></div>
   </details>
@@ -972,6 +972,7 @@ function connect(frame) {
   for (const event of ['pointerdown', 'keydown', 'input']) {
     doc.addEventListener(event, noteInteraction, {capture:true});
   }
+  for (const event of ['click', 'keydown']) doc.addEventListener(event, autoPrepareUSB, true);
   usbArm.disabled = !['echoes', 'words'].every(name =>
     typeof byId(name).contentWindow.setInstallationMicrophone === 'function');
   if (frame.id === 'echoes') {
@@ -1025,12 +1026,12 @@ function connect(frame) {
 }
 
 const usbOptionsKey = 'ecos-y-palabras.usb-options.v1';
-const usbOptions = {mode:'hold', target:'both', invert:false, seconds:60};
+const usbOptions = {mode:'hold', target:'both', invert:true, seconds:60};
 try {
   const saved = JSON.parse(localStorage.getItem(usbOptionsKey));
   if (saved?.mode === 'toggle') usbOptions.mode = saved.mode;
   if (['echoes', 'words'].includes(saved?.target)) usbOptions.target = saved.target;
-  usbOptions.invert = saved?.invert === true;
+  if (typeof saved?.invert === 'boolean') usbOptions.invert = saved.invert;
   if (Number.isInteger(saved?.seconds) && saved.seconds >= 1 && saved.seconds <= 3600) {
     usbOptions.seconds = saved.seconds;
   }
@@ -1057,6 +1058,7 @@ let usbStandby;
 let usbContext;
 let usbMicActive = false;
 let usbConnectedButton;
+let usbAutoPrepareAttempted = false;
 
 function saveUSBOptions() {
   try { localStorage.setItem(usbOptionsKey, JSON.stringify(usbOptions)); }
@@ -1113,12 +1115,17 @@ function releaseUSBStandby() {
   usbArm.textContent = 'Preparar micrófono USB';
 }
 
-usbArm.onclick = async () => {
+usbArm.onclick = () => {
   if (usbContext) {
     releaseUSBStandby();
     usbMicStatus.textContent = 'Micrófono USB desarmado.';
     return;
   }
+  prepareUSBMicrophone();
+};
+
+async function prepareUSBMicrophone() {
+  usbAutoPrepareAttempted = true;
   usbArm.disabled = true;
   usbMicStatus.textContent = 'Preparando acceso al micrófono…';
   let context;
@@ -1160,7 +1167,13 @@ usbArm.onclick = async () => {
   } finally {
     usbArm.disabled = false;
   }
-};
+}
+
+function autoPrepareUSB(event) {
+  if (event && (!event.isTrusted || usbArm.contains(event.target))) return;
+  if (usbAutoPrepareAttempted || usbArm.disabled || usbConnectedButton === undefined) return;
+  if (event || navigator.userActivation?.hasBeenActive) prepareUSBMicrophone();
+}
 
 function applyMicrophoneInput({pressed, reason}) {
   usbConnectedButton = reason === 'disconnect' ? undefined : pressed;
@@ -1169,6 +1182,7 @@ function applyMicrophoneInput({pressed, reason}) {
     setUSBMicrophone(false);
     return;
   }
+  autoPrepareUSB();
   const active = pressed !== usbOptions.invert;
   if (usbOptions.mode === 'hold') {
     if (reason === 'edge' || active) noteInteraction(true);
@@ -1228,7 +1242,12 @@ mountUSBController(byId('usb-panel'), {
   preferredDevice:/0079.*0006|Generic\s+USB\s+Joystick/i,
   onActivity:noteInteraction,
   actions:[
-    {id:'mic', label:'Activar/desactivar micrófono', onInput:applyMicrophoneInput},
+    {
+      id:'mic',
+      label:'Activar/desactivar micrófono',
+      defaultBinding:{device:'Generic USB Joystick (STANDARD GAMEPAD Vendor: 0079 Product: 0006)', button:1},
+      onInput:applyMicrophoneInput
+    },
     {id:'automatic', label:'Activar/desactivar automático', onInput:usbPress(() => setAutomaticEnabled(!automaticActive, true))},
     {id:'fullscreen', label:'Pantalla completa', onInput:usbPress(() => togglePresentation(false, true))},
     {id:'effect', label:'Cambiar efectos visuales', onInput:usbPress(cycleEffects)},
@@ -1247,6 +1266,7 @@ setInterval(updateInstallationAutomatic, 200);
 for (const event of ['pointerdown', 'keydown', 'input']) {
   document.addEventListener(event, noteInteraction, {capture:true});
 }
+for (const event of ['click', 'keydown']) document.addEventListener(event, autoPrepareUSB, true);
 window.addEventListener('pagehide', releaseUSBStandby);
 
 for (const button of options) {

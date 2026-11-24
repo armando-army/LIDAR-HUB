@@ -13,15 +13,15 @@ export function mountUSBController(panel, {storageKey, actions, preferredDevice,
   let learning;
   let frame;
 
-  try {
-    const saved = JSON.parse(localStorage.getItem(storageKey)) ?? {};
-    for (const {id} of actions) {
-      const binding = saved[id];
-      if (typeof binding?.device === 'string' && Number.isInteger(binding.button) && binding.button >= 0) {
-        bindings.set(id, binding);
-      }
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(storageKey)); }
+  catch {}
+  for (const {id, defaultBinding} of actions) {
+    const binding = saved && typeof saved === 'object' ? saved[id] : defaultBinding;
+    if (typeof binding?.device === 'string' && Number.isInteger(binding.button) && binding.button >= 0) {
+      bindings.set(id, binding);
     }
-  } catch {}
+  }
 
   function save() {
     try { localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(bindings))); }
