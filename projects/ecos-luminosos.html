@@ -35,7 +35,7 @@ body:has(.stage.projection-fullwindow){overflow:hidden}
 .delay-control summary:hover,.delay-control[open] summary{border-color:#a490b6}
 .delay-control summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .delay-options{position:absolute;z-index:2;left:13px;bottom:calc(100% + 4px);width:min(250px,calc(100% - 26px));padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
-.delay-options .range{margin:0}
+.delay-options .range,.delay-options.range{margin:0}
 .delay-control output{color:var(--accent);font-variant-numeric:tabular-nums}
 </style>
 </head>
@@ -66,7 +66,14 @@ body:has(.stage.projection-fullwindow){overflow:hidden}
 </div>
 <div class="bar playback-bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button>
 <button id="automatic" type="button" aria-pressed="true" title="Animar después de un minuto de silencio">Automático</button>
-<details class="delay-control">
+<details class="delay-control" name="echo-timing">
+  <summary>Pausa loop · <output for="loop-pause" id="loop-pause-value">2 s</output></summary>
+  <div class="delay-options range">
+    <label for="loop-pause">Segundos entre ondas automáticas</label>
+    <input id="loop-pause" type="range" min="0.5" max="15" step="0.1" value="2">
+  </div>
+</details>
+<details class="delay-control" name="echo-timing">
   <summary>Delay · <output for="audioDelay" id="audioDelayOut">2,5 s</output></summary>
   <div class="delay-options">
     <div class="range">
@@ -570,6 +577,7 @@ let microphone;
 let micRequest = 0;
 const automaticSilenceMs = 60_000;
 let automaticEnabled = true;
+let loopPause = 2;
 const microphoneMessage = 'Micrófono activo. Las ondas siguen el contorno hacia el límite elegido.';
 let audioDelay = Number(byId('audioDelay').value);
 const maxEchoes = 12;
@@ -712,9 +720,10 @@ void main() {
     slope = -wake * (sin(behind * 6.283185) * .84 + sin(behind * 12.56637) * .16);
     for (int i = 0; i < ${maxEchoes}; i++) {
       vec2 echo = soundEchoes[i];
-      if (echo.y > 0.) {
-        float strength = echo.y * (1. - smoothstep(.79, 1.10, echo.x));
-        float diff = (wave - echo.x) / spacing;
+      if (echo.y != 0.) {
+        bool inward = echo.y < 0.;
+        float strength = abs(echo.y) * (1. - smoothstep(.79, 1.10, echo.x));
+        float diff = ((inward ? 1. - wave : wave) - echo.x) / spacing;
         float shifted = diff - haloShift * .28;
         if (abs(shifted) < 2.5) {
           crest += strength * crestGain * exp(-square(diff / crestWidth));
@@ -722,9 +731,11 @@ void main() {
                     + .38 * exp(-abs(shifted) / mix(.035, .32, halo)));
         }
         float profile = diff * 5.;
-        slope += strength * profile * exp(-square(profile) * .55) * 1.55;
-        shapeEmission += strength * (1. - smoothstep(0., .045, echo.x));
-        frameEmission += strength * smoothstep(.91, 1., echo.x);
+        slope += (inward ? -1. : 1.) * strength * profile * exp(-square(profile) * .55) * 1.55;
+        float start = strength * (1. - smoothstep(0., .045, echo.x));
+        float end = strength * smoothstep(.91, 1., echo.x);
+        shapeEmission += inward ? end : start;
+        frameEmission += inward ? start : end;
       }
     }
   }
@@ -1160,7 +1171,7 @@ function render() {
   gl.uniform1f(u.maskOnly, Number(showMask));
   gl.uniform1f(u.distanceScale, analysis.distanceScale);
   gl.uniform1f(u.insideScale, analysis.maxInside);
-  gl.uniform1f(u.audioMode, Number(Boolean(microphone && !microphone.automatic)));
+  gl.uniform1f(u.audioMode, Number(Boolean(microphone)));
   gl.uniform1f(u.audioTail, trailingWave());
   gl.uniform1f(u.audioTailFront, microphone?.tailFront ?? 0);
   if (microphone) {
@@ -1181,6 +1192,7 @@ function updateAutomaticMode(now) {
     now - microphone.lastSoundAt >= automaticSilenceMs;
   if (automatic === microphone.automatic) return;
   microphone.automatic = automatic;
+  microphone.lastAutomaticAt = -Infinity;
   micStatus(automatic ? 'Automático activo por silencio. Volvé a hablar para retomar las ondas por voz.' : microphoneMessage);
 }
 
@@ -1197,6 +1209,17 @@ function trailingWave() {
   const remaining = 1 - quiet / audioDelay;
   const onset = Math.min(1, quiet / Math.min(.12, audioDelay * .25));
   return .4 * onset * remaining * remaining * (3 - 2 * remaining);
+}
+
+function emitEcho(strength) {
+  if (echoes.length >= maxEchoes) echoes.shift();
+  echoes.push({position: 0, strength});
+}
+
+function emitAutomaticEcho(state, now) {
+  if (!state.automatic || now - state.lastAutomaticAt < loopPause * 1000) return;
+  emitEcho(byId('direction').value === 'in' ? -.72 : .72);
+  state.lastAutomaticAt = now;
 }
 
 function advanceEchoes(state, delta, speed, spacing, now) {
@@ -1220,10 +1243,9 @@ function advanceEchoes(state, delta, speed, spacing, now) {
   state.sounding = sounding;
   if (sounding) state.lastSoundAt = now;
 
-  const latest = echoes[echoes.length - 1];
-  if (sounding && (!latest || latest.position >= Math.max(.10, spacing))) {
+  if (sounding && (state.tailFront === null || state.tailFront >= Math.max(.10, spacing))) {
     const strength = Math.min(1, .42 + .52 * Math.log2(Math.max(1, rms / gate)));
-    echoes.push({position: 0, strength});
+    emitEcho(strength);
     state.tailFront = 0;
   }
 }
@@ -1329,8 +1351,8 @@ function animate(time) {
     if (microphone) {
       advanceEchoes(microphone, delta, speed, Number(byId('spacing').value) / 100, time);
       updateAutomaticMode(time);
-    }
-    if (!microphone || microphone.automatic) {
+      emitAutomaticEcho(microphone, time);
+    } else {
       const direction = byId('direction').value === 'out' ? 1 : -1;
       phase = (phase + delta * speed * .017 * direction + 1) % 1;
     }
@@ -1485,6 +1507,10 @@ byId('automatic').onclick = (event) => {
   const button = event.currentTarget;
   setAutomaticEnabled(!automaticEnabled);
   button.setAttribute('aria-pressed', String(automaticEnabled));
+};
+byId('loop-pause').oninput = (event) => {
+  loopPause = Number(event.currentTarget.value);
+  byId('loop-pause-value').value = loopPause.toLocaleString('es-AR') + ' s';
 };
 byId('audioDelay').oninput = (event) => {
   audioDelay = Number(event.currentTarget.value);
