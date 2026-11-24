@@ -65,6 +65,7 @@ body:has(.stage.projection-fullwindow){overflow:hidden}
   </section>
 </div>
 <div class="bar playback-bar"><div class="toolbar"><button id="play" aria-pressed="false">Pausar</button><button id="microphone" aria-pressed="false" aria-describedby="micStatus">Activar micrófono</button>
+<button id="automatic" type="button" aria-pressed="true" title="Animar después de un minuto de silencio">Automático</button>
 <details class="delay-control">
   <summary>Delay · <output for="audioDelay" id="audioDelayOut">2,5 s</output></summary>
   <div class="delay-options">
@@ -567,6 +568,9 @@ let photoTexture;
 let photoSequence = 0;
 let microphone;
 let micRequest = 0;
+const automaticSilenceMs = 60_000;
+let automaticEnabled = true;
+const microphoneMessage = 'Micrófono activo. Las ondas siguen el contorno hacia el límite elegido.';
 let audioDelay = Number(byId('audioDelay').value);
 const maxEchoes = 12;
 const echoes = [];
@@ -1156,7 +1160,7 @@ function render() {
   gl.uniform1f(u.maskOnly, Number(showMask));
   gl.uniform1f(u.distanceScale, analysis.distanceScale);
   gl.uniform1f(u.insideScale, analysis.maxInside);
-  gl.uniform1f(u.audioMode, Number(Boolean(microphone)));
+  gl.uniform1f(u.audioMode, Number(Boolean(microphone && !microphone.automatic)));
   gl.uniform1f(u.audioTail, trailingWave());
   gl.uniform1f(u.audioTailFront, microphone?.tailFront ?? 0);
   if (microphone) {
@@ -1169,6 +1173,21 @@ function render() {
   }
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   if (mapped) projection.draw();
+}
+
+function updateAutomaticMode(now) {
+  if (!microphone) return;
+  const automatic = automaticEnabled && !microphone.sounding &&
+    now - microphone.lastSoundAt >= automaticSilenceMs;
+  if (automatic === microphone.automatic) return;
+  microphone.automatic = automatic;
+  micStatus(automatic ? 'Automático activo por silencio. Volvé a hablar para retomar las ondas por voz.' : microphoneMessage);
+}
+
+function setAutomaticEnabled(enabled) {
+  automaticEnabled = enabled;
+  updateAutomaticMode(performance.now());
+  render();
 }
 
 function trailingWave() {
@@ -1272,7 +1291,7 @@ async function toggleMicrophone() {
       context.close().catch(() => {});
       return;
     }
-    microphone = {context, stream, input, analyser, samples: new Float32Array(analyser.fftSize), noise: .003, sounding: false, lastSoundAt: -Infinity, tailFront: null};
+    microphone = {context, stream, input, analyser, samples: new Float32Array(analyser.fftSize), noise: .003, sounding: false, lastSoundAt: performance.now(), tailFront: null, automatic: false};
     for (const track of stream.getAudioTracks()) {
       track.addEventListener('ended', () => {
         if (microphone?.stream !== stream) return;
@@ -1287,7 +1306,7 @@ async function toggleMicrophone() {
     lastTime = undefined;
     button.textContent = 'Desactivar micrófono';
     button.setAttribute('aria-pressed', 'true');
-    micStatus('Micrófono activo. Las ondas siguen el contorno hacia el límite elegido.');
+    micStatus(microphoneMessage);
     refresh();
     restartAnimation();
   } catch (error) {
@@ -1309,8 +1328,9 @@ function animate(time) {
     const speed = Number(byId('speed').value);
     if (microphone) {
       advanceEchoes(microphone, delta, speed, Number(byId('spacing').value) / 100, time);
-      phase = (phase + delta * .18) % 1;
-    } else {
+      updateAutomaticMode(time);
+    }
+    if (!microphone || microphone.automatic) {
       const direction = byId('direction').value === 'out' ? 1 : -1;
       phase = (phase + delta * speed * .017 * direction + 1) % 1;
     }
@@ -1461,6 +1481,11 @@ byId('removePhoto').onclick = () => {
   refresh();
 };
 byId('microphone').onclick = toggleMicrophone;
+byId('automatic').onclick = (event) => {
+  const button = event.currentTarget;
+  setAutomaticEnabled(!automaticEnabled);
+  button.setAttribute('aria-pressed', String(automaticEnabled));
+};
 byId('audioDelay').oninput = (event) => {
   audioDelay = Number(event.currentTarget.value);
   byId('audioDelayOut').value = audioDelay.toLocaleString('es-AR') + ' s';
