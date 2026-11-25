@@ -137,6 +137,10 @@ body.presenting #usb-panel{display:none}
       <button id="rotate-words" type="button">Girar Palabras · 0°</button>
     </div>
     <div class="options">
+      <button id="mapSwapSides" type="button" aria-pressed="false">Intercambiar lados</button>
+      <span id="mapSideOrder" class="status"></span>
+    </div>
+    <div class="options">
       <label><input id="mapGuides" type="checkbox" checked> Ver guías</label>
       <button id="mapExit" type="button">Salir de pantalla completa</button>
     </div>
@@ -782,6 +786,25 @@ const compositeContext = composite.getContext('2d', {alpha:false});
 const renderProjection = createProjectionRenderer(mapped, mapper);
 let mappingFrame;
 const rotationKey = 'ecos-y-palabras.rotation.v1';
+const sideOrderKey = 'ecos-y-palabras.swap-sides.v1';
+let swappedSides = false;
+try { swappedSides = localStorage.getItem(sideOrderKey) === 'true'; } catch {}
+
+function syncSideOrder() {
+  byId('mapSwapSides').setAttribute('aria-pressed', String(swappedSides));
+  byId('mapSideOrder').textContent = swappedSides ? 'HONESTY | Ecos' : 'Ecos | HONESTY';
+}
+
+function saveSideOrder() {
+  syncSideOrder();
+  try { localStorage.setItem(sideOrderKey, String(swappedSides)); } catch {}
+}
+
+byId('mapSwapSides').onclick = () => {
+  swappedSides = !swappedSides;
+  saveSideOrder();
+};
+syncSideOrder();
 let rotation = {echoes:0, words:0};
 try {
   const saved = JSON.parse(localStorage.getItem(rotationKey));
@@ -808,7 +831,9 @@ for (const name of Object.keys(rotation)) {
 }
 byId('mapReset').addEventListener('click', () => {
   rotation = {echoes:0, words:0};
+  swappedSides = false;
   saveRotation();
+  saveSideOrder();
 });
 syncRotation();
 
@@ -851,9 +876,11 @@ function renderMapping() {
     }
     compositeContext.fillStyle = '#000';
     compositeContext.fillRect(0, 0, width, height);
-    drawMappedImage(compositeContext, echoCanvas, 0, left, height, rotation.echoes, true);
+    const right = width - left;
+    drawMappedImage(compositeContext, echoCanvas,
+      swappedSides ? left : 0, swappedSides ? right : left, height, rotation.echoes, true);
     drawMappedImage(compositeContext, speech.hidden ? words.getElementById('glcanvas') : speech,
-      left, width - left, height, rotation.words, false,
+      swappedSides ? 0 : left, swappedSides ? left : right, height, rotation.words, false,
       wordsWork.classList.contains('mirrored'), wordsWork.classList.contains('inverted'));
     try {
       renderProjection(composite, false, false);
